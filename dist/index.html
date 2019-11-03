@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Three js sample</title>
+    <link rel="stylesheet" type="text/css" href="/styles.b61e60ae.css">
+<script src="/styles.b61e60ae.js"></script></head>
+<body>
+
+    <div id="threejs-place">
+
+    </div>
+
+
+
+
+    <!-- <script type="x-shader/x-vertex" id="vertexshader">
+        attribute float size;
+        attribute vec3 ca;
+        varying vec3 vColor;
+        void main() {
+            vColor = ca;
+            vec4 mvPosition = modelViewMatrix * vec4( position, 1.0 );
+            gl_PointSize = size * ( 300.0 / -mvPosition.z );
+            gl_Position = projectionMatrix * mvPosition;
+        }
+    </script>
+
+    <script type="x-shader/x-fragment" id="fragmentshader">
+        uniform vec3 color;
+        uniform sampler2D pointTexture;
+        varying vec3 vColor;
+        void main() {
+            vec4 color = vec4( color * vColor, 1.0 ) * texture2D( pointTexture, gl_PointCoord );
+            gl_FragColor = color;
+        }
+    </script> -->
+
+    <script type="x-shader/x-vertex" id="vertexshader">
+        attribute float scale;
+        attribute vec4 ca;
+        varying vec4 vColor;
+
+        void main() {
+            vColor = ca;
+
+            vec4 mvPosition = modelViewMatrix * vec4( position, 1.0 );
+            gl_PointSize = scale * ( 300.0 / - mvPosition.z );
+            gl_Position = projectionMatrix * mvPosition;
+        }
+    </script>
+
+    <script type="x-shader/x-fragment" id="fragmentshader">
+        uniform vec3 color;
+        varying vec4 vColor;
+
+        void main() {
+            if ( length( gl_PointCoord - vec2( 0.5, 0.5 ) ) > 0.475 ) discard;
+            gl_FragColor = vec4( color * vColor.xyz, 1.0 );
+
+            float depth = gl_FragCoord.z / gl_FragCoord.w;
+            const vec3 fogColor = vec3( 0.0 );
+            float fogFactor = smoothstep( 200.0, 600.0, depth );
+            gl_FragColor = mix( gl_FragColor, vec4( fogColor, gl_FragColor.w ), fogFactor );
+        }
+    </script>
+    
+    <script src="/src.a2b27638.js"></script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+#threejs-place {
+    width: 1000px;
+    height: 900px;
+
+}
+
+canvas {
+    width: 100%;
+    height: 100%;
+}
+
