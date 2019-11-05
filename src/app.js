@@ -1,31 +1,40 @@
 import * as THREE from 'three';
 import Stats from '../node_modules/three/examples/jsm/libs/stats.module';
 
-import { EffectComposer } from '../node_modules/three/examples/jsm/postprocessing/EffectComposer.js';
-import { RenderPass } from '../node_modules/three/examples/jsm/postprocessing/RenderPass.js';
-import { ShaderPass } from '../node_modules/three/examples/jsm/postprocessing/ShaderPass.js';
+import { EffectComposer } from '../node_modules/three/examples/jsm/postprocessing/EffectComposer';
+import { RenderPass } from '../node_modules/three/examples/jsm/postprocessing/RenderPass';
+import { UnrealBloomPass } from '../node_modules/three/examples/jsm/postprocessing/UnrealBloomPass';
+import { OrbitControls } from '../node_modules/three/examples/jsm/controls/OrbitControls';
+// import { LineMaterial } from '../node_modules/three/examples/jsm/lines/LineMaterial';
+// import { LineGeometry } from '../node_modules/three/examples/jsm/lines/LineGeometry';
+// import { Line2 } from '../node_modules/three/examples/jsm/lines/Line2';
+
+import { Settings } from './settings';
+import Link from './link';
+import Signal from './signal';
 
 export default class App {
   constructor(nodeElement) {
-    // settings
-    this.clippingNear = 1;
-    this.clippingFar = 10000;
-
-    this.pointsCount = 1000;
+    // threejs points
     this.points = null;
-    this.pointsSpread = 500;
+    // additional data for points
+    this.pointsData = null;
 
+    this.links = null;
 
     this.nodeElement = nodeElement;
   }
 
   createScene() {
     this.scene = new THREE.Scene();
+    this.scene.fog = new THREE.Fog(0x000000, 200, 600);
     // this.scene.fog = new THREE.FogExp2(0x000000, 0.01);
     // this.scene.background = new THREE.Color(0x050505);
     this.camera = new THREE.PerspectiveCamera(75,
       this.nodeElement.clientWidth / this.nodeElement.clientHeight,
-      this.clippingNear, this.clippingFar);
+      Settings.CLIPPING_NEAR, Settings.CLIPPING_FAR);
+
+    this.camera.position.z = 400;
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setSize(this.nodeElement.clientWidth, this.nodeElement.clientHeight);
@@ -34,56 +43,87 @@ export default class App {
     this.stats = new Stats();
     this.nodeElement.appendChild(this.stats.dom);
 
-    this.placeCamera();
-    // this.createTestGeometry();
+    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+    this.controls.update();
+
     this.generatePoints();
 
+    this.generatePointsData();
+    // calculating distances for each point to other connectable points
+    this.calculateDistances();
+
+    this.renderScene = new RenderPass(this.scene, this.camera);
+
+    this.bloomPass = new UnrealBloomPass(new THREE.Vector2(this.nodeElement.clientWidth,
+      this.nodeElement.clientHeight), 1.5, 0.4, 0.85);
+    this.bloomPass.threshold = 0;
+    this.bloomPass.strength = 1.5;
+    this.bloomPass.radius = 0;
+
+    this.composer = new EffectComposer(this.renderer);
+    this.composer.addPass(this.renderScene);
+    this.composer.addPass(this.bloomPass);
+
     this.animate();
+    this.drawLine();
+
+    this.generateTestLink();
   }
 
-  placeCamera() {
-    this.camera.position.z = 400;
+  generatePointsData() {
+    this.pointsData = [];
+    for (let i = 0; i < Settings.POINTS_COUNT; i += 1) {
+      this.pointsData.push({
+        neighbours: [],
+      });
+    }
   }
 
-  createTestGeometry() {
-    // test geometry
-    const geometry = new THREE.BoxGeometry(10, 10, 10);
-    const material = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
-    this.cube = new THREE.Mesh(geometry, material);
-    this.scene.add(this.cube);
-  }
+  calculateDistances() {
+    // console.log('Calculating distances - start');
+    let j = 0;
+    for (let i = 0; i < Settings.POINTS_COUNT * 3; i += 3) {
+      const v = new THREE.Vector3();
+      v.fromBufferAttribute(this.points.geometry.attributes.position, i);
+      // searching for points in distance range
+      for (let k = 0; k < Settings.POINTS_COUNT * 3; k += 3) {
+        const v2 = new THREE.Vector3();
+        v2.fromBufferAttribute(this.points.geometry.attributes.position, k);
+        const d = v.distanceTo(v2);
+        if (d > Settings.NEAR_BORDER && d < Settings.FAR_BORDER) {
+          // pushing to array of point neighbours
+          this.pointsData[j].neighbours.push(k / 3);
+        }
+      }
 
-  animate() {
-    requestAnimationFrame(() => { this.animate(); });
-
-    // this.cube.rotation.x += 0.01;
-    // this.cube.rotation.y += 0.01;
-
-    const time = Date.now() * 0.0005;
-    this.points.rotation.x = time * 0.25;
-    this.points.rotation.y = time * 0.5;
-
-    this.stats.update();
-
-    this.renderer.render(this.scene, this.camera);
+      j += 1;
+    }
+    // console.log('Calculating distances - finished');
   }
 
   generatePoints() {
     // generate random point position
-    const positions = new Float32Array(this.pointsCount * 3);
-    const scale = new Float32Array(this.pointsCount);
-    const colors = new Float32Array(this.pointsCount * 3);
+    const positions = new Float32Array(Settings.POINTS_COUNT * 3);
+    const scale = new Float32Array(Settings.POINTS_COUNT);
+    const colors = new Float32Array(Settings.POINTS_COUNT * 3);
 
-    let j = 0;
-    let color = new THREE.Color();
+    const color1 = new THREE.Color();
+    const color2 = new THREE.Color();
     // color.setHSL(0.6, 0.75, 0.25);
-    color.setRGB(0.9, 0.1, 0.1);
-    for (let i = 0; i < this.pointsCount * 3; i += 3) {
-      positions[i] = THREE.Math.randFloatSpread(this.pointsSpread); // x
-      positions[i + 1] = THREE.Math.randFloatSpread(this.pointsSpread); // y
-      positions[i + 2] = THREE.Math.randFloatSpread(this.pointsSpread); // z
-      scale[j] = 10;
-      color.toArray(colors, j * 3);
+    color1.setRGB(0.9, 0.9, 0.9);
+    color2.setRGB(0.0, 0.9, 0.1);
+    let j = 0;
+    for (let i = 0; i < Settings.POINTS_COUNT * 3; i += 3) {
+      positions[i] = THREE.Math.randFloatSpread(Settings.POINTS_SPREAD); // x
+      positions[i + 1] = THREE.Math.randFloatSpread(Settings.POINTS_SPREAD); // y
+      positions[i + 2] = THREE.Math.randFloatSpread(Settings.POINTS_SPREAD); // z
+      if ((j % 10) === 0) {
+        scale[j] = 10;
+        color2.toArray(colors, j * 3);
+      } else {
+        scale[j] = 3;
+        color1.toArray(colors, j * 3);
+      }
       j += 1;
     }
 
@@ -92,21 +132,9 @@ export default class App {
     geometry.setAttribute('scale', new THREE.BufferAttribute(scale, 1));
     geometry.setAttribute('ca', new THREE.BufferAttribute(colors, 3));
 
-    // geometry.computeBoundingSphere();
-
     const sprite = new THREE.TextureLoader().load('textures/disc2.png');
     sprite.wrapS = THREE.RepeatWrapping;
     sprite.wrapT = THREE.RepeatWrapping;
-
-    // const material = new THREE.PointsMaterial({
-    //   size: 15,
-    //   sizeAttenuation: true,
-    //   map: sprite,
-    //   // color: 0xffffff,
-    //   alphaTest: 0.5,
-    //   transparent: true,
-    // });
-    // material.color.setHSL(1.0, 0.3, 0.7);
 
     const material = new THREE.ShaderMaterial({
       uniforms: {
@@ -120,7 +148,123 @@ export default class App {
 
     this.points = new THREE.Points(geometry, material);
     this.scene.add(this.points);
-
   }
 
+  drawLine() {
+    // for now choosing two points only
+    const { attributes } = this.points.geometry;
+
+    let index = App.getRandomInt(0, Settings.POINTS_COUNT) * 3;
+    const point1 = [
+      attributes.position.array[index],
+      attributes.position.array[index + 1],
+      attributes.position.array[index + 2],
+    ];
+
+    this.target = point1;
+    index = App.getRandomInt(0, Settings.POINTS_COUNT) * 3;
+    const point2 = [
+      attributes.position.array[index],
+      attributes.position.array[index + 1],
+      attributes.position.array[index + 2],
+    ];
+
+    // const positions = [...point1, ...point2];
+    // console.log(positions);
+
+
+    // // version 1 ------------------------
+    const color = new THREE.Color();
+    color.setHSL(1.0, 1.0, 1.0);
+    let colors = [color.r, color.g, color.b];
+    color.setHSL(0.01, 0.01, 0.01);
+    colors = [...colors, color.r, color.g, color.b];
+
+    const geometry = new THREE.BufferGeometry();
+    const vertices = new Float32Array([...point1, ...point2]);
+    geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    const material = new THREE.LineBasicMaterial({
+      color: 0xffffff,
+      linewidth: 5,
+      vertexColors: THREE.VertexColors,
+    });
+
+
+    const line = new THREE.Line(geometry, material);
+    this.scene.add(line);
+  }
+
+  static getRandomInt(min, max) {
+    return Math.floor(Math.random() * (max - min) + min);
+  }
+
+  // eslint-disable-next-line class-methods-use-this
+  createLink(v1, v2) {
+    const link = new Link(v1, v2, this.scene);
+    return link;
+  }
+
+  generateTestLink() {
+    // for now choosing two points only
+    const { attributes } = this.points.geometry;
+
+    let index = App.getRandomInt(0, Settings.POINTS_COUNT) * 3;
+    const v1 = new THREE.Vector3(attributes.position.array[index],
+      attributes.position.array[index + 1],
+      attributes.position.array[index + 2]);
+
+    index = App.getRandomInt(0, Settings.POINTS_COUNT) * 3;
+    const v2 = new THREE.Vector3(attributes.position.array[index],
+      attributes.position.array[index + 1],
+      attributes.position.array[index + 2]);
+
+    this.links = [this.createLink(v1, v2)];
+
+    this.placeCamera(v1);
+  }
+
+  processAllLinks() {
+    if (this.links === null) {
+      return;
+    }
+    // cycle through links
+    this.links.forEach((l) => {
+      l.processLink();
+    });
+  }
+
+  animate() {
+    requestAnimationFrame(() => { this.animate(); });
+
+    // this.cube.rotation.x += 0.01;
+    // this.cube.rotation.y += 0.01;
+
+    const time = Date.now() * 0.0005;
+    // this.points.rotation.x = time * 0.25;
+    // this.points.rotation.y = time * 0.5;
+
+    // this.camera.lookAt(this.target[0], this.target[1], this.target[2]);
+
+    this.processAllLinks();
+
+    this.stats.update();
+
+    // this.renderer.render(this.scene, this.camera);
+    this.composer.render();
+  }
+
+  nextStep() {
+    this.processAllLinks();
+  }
+
+  placeCamera(v) {
+    return;
+    const pos = v.clone();
+    pos.z -= 200;
+    this.camera.position.set(pos.x, pos.y, pos.z);
+
+    this.controls.target.set(v.x, v.y, v.z);
+    this.controls.update();
+  }
 }

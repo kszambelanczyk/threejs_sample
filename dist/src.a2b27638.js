@@ -35417,7 +35417,1479 @@ RenderPass.prototype = Object.assign(Object.create(_Pass.Pass.prototype), {
     renderer.autoClear = oldAutoClear;
   }
 });
-},{"../postprocessing/Pass.js":"node_modules/three/examples/jsm/postprocessing/Pass.js"}],"src/app.js":[function(require,module,exports) {
+},{"../postprocessing/Pass.js":"node_modules/three/examples/jsm/postprocessing/Pass.js"}],"node_modules/three/examples/jsm/shaders/LuminosityHighPassShader.js":[function(require,module,exports) {
+"use strict";
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports.LuminosityHighPassShader = void 0;
+
+var _threeModule = require("../../../build/three.module.js");
+
+/**
+ * @author bhouston / http://clara.io/
+ *
+ * Luminosity
+ * http://en.wikipedia.org/wiki/Luminosity
+ */
+var LuminosityHighPassShader = {
+  shaderID: "luminosityHighPass",
+  uniforms: {
+    "tDiffuse": {
+      value: null
+    },
+    "luminosityThreshold": {
+      value: 1.0
+    },
+    "smoothWidth": {
+      value: 1.0
+    },
+    "defaultColor": {
+      value: new _threeModule.Color(0x000000)
+    },
+    "defaultOpacity": {
+      value: 0.0
+    }
+  },
+  vertexShader: ["varying vec2 vUv;", "void main() {", "	vUv = uv;", "	gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );", "}"].join("\n"),
+  fragmentShader: ["uniform sampler2D tDiffuse;", "uniform vec3 defaultColor;", "uniform float defaultOpacity;", "uniform float luminosityThreshold;", "uniform float smoothWidth;", "varying vec2 vUv;", "void main() {", "	vec4 texel = texture2D( tDiffuse, vUv );", "	vec3 luma = vec3( 0.299, 0.587, 0.114 );", "	float v = dot( texel.xyz, luma );", "	vec4 outputColor = vec4( defaultColor.rgb, defaultOpacity );", "	float alpha = smoothstep( luminosityThreshold, luminosityThreshold + smoothWidth, v );", "	gl_FragColor = mix( outputColor, texel, alpha );", "}"].join("\n")
+};
+exports.LuminosityHighPassShader = LuminosityHighPassShader;
+},{"../../../build/three.module.js":"node_modules/three/build/three.module.js"}],"node_modules/three/examples/jsm/postprocessing/UnrealBloomPass.js":[function(require,module,exports) {
+"use strict";
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports.UnrealBloomPass = void 0;
+
+var _threeModule = require("../../../build/three.module.js");
+
+var _Pass = require("../postprocessing/Pass.js");
+
+var _CopyShader = require("../shaders/CopyShader.js");
+
+var _LuminosityHighPassShader = require("../shaders/LuminosityHighPassShader.js");
+
+/**
+ * @author spidersharma / http://eduperiment.com/
+ *
+ * Inspired from Unreal Engine
+ * https://docs.unrealengine.com/latest/INT/Engine/Rendering/PostProcessEffects/Bloom/
+ */
+var UnrealBloomPass = function (resolution, strength, radius, threshold) {
+  _Pass.Pass.call(this);
+
+  this.strength = strength !== undefined ? strength : 1;
+  this.radius = radius;
+  this.threshold = threshold;
+  this.resolution = resolution !== undefined ? new _threeModule.Vector2(resolution.x, resolution.y) : new _threeModule.Vector2(256, 256); // create color only once here, reuse it later inside the render function
+
+  this.clearColor = new _threeModule.Color(0, 0, 0); // render targets
+
+  var pars = {
+    minFilter: _threeModule.LinearFilter,
+    magFilter: _threeModule.LinearFilter,
+    format: _threeModule.RGBAFormat
+  };
+  this.renderTargetsHorizontal = [];
+  this.renderTargetsVertical = [];
+  this.nMips = 5;
+  var resx = Math.round(this.resolution.x / 2);
+  var resy = Math.round(this.resolution.y / 2);
+  this.renderTargetBright = new _threeModule.WebGLRenderTarget(resx, resy, pars);
+  this.renderTargetBright.texture.name = "UnrealBloomPass.bright";
+  this.renderTargetBright.texture.generateMipmaps = false;
+
+  for (var i = 0; i < this.nMips; i++) {
+    var renderTargetHorizonal = new _threeModule.WebGLRenderTarget(resx, resy, pars);
+    renderTargetHorizonal.texture.name = "UnrealBloomPass.h" + i;
+    renderTargetHorizonal.texture.generateMipmaps = false;
+    this.renderTargetsHorizontal.push(renderTargetHorizonal);
+    var renderTargetVertical = new _threeModule.WebGLRenderTarget(resx, resy, pars);
+    renderTargetVertical.texture.name = "UnrealBloomPass.v" + i;
+    renderTargetVertical.texture.generateMipmaps = false;
+    this.renderTargetsVertical.push(renderTargetVertical);
+    resx = Math.round(resx / 2);
+    resy = Math.round(resy / 2);
+  } // luminosity high pass material
+
+
+  if (_LuminosityHighPassShader.LuminosityHighPassShader === undefined) console.error("UnrealBloomPass relies on LuminosityHighPassShader");
+  var highPassShader = _LuminosityHighPassShader.LuminosityHighPassShader;
+  this.highPassUniforms = _threeModule.UniformsUtils.clone(highPassShader.uniforms);
+  this.highPassUniforms["luminosityThreshold"].value = threshold;
+  this.highPassUniforms["smoothWidth"].value = 0.01;
+  this.materialHighPassFilter = new _threeModule.ShaderMaterial({
+    uniforms: this.highPassUniforms,
+    vertexShader: highPassShader.vertexShader,
+    fragmentShader: highPassShader.fragmentShader,
+    defines: {}
+  }); // Gaussian Blur Materials
+
+  this.separableBlurMaterials = [];
+  var kernelSizeArray = [3, 5, 7, 9, 11];
+  var resx = Math.round(this.resolution.x / 2);
+  var resy = Math.round(this.resolution.y / 2);
+
+  for (var i = 0; i < this.nMips; i++) {
+    this.separableBlurMaterials.push(this.getSeperableBlurMaterial(kernelSizeArray[i]));
+    this.separableBlurMaterials[i].uniforms["texSize"].value = new _threeModule.Vector2(resx, resy);
+    resx = Math.round(resx / 2);
+    resy = Math.round(resy / 2);
+  } // Composite material
+
+
+  this.compositeMaterial = this.getCompositeMaterial(this.nMips);
+  this.compositeMaterial.uniforms["blurTexture1"].value = this.renderTargetsVertical[0].texture;
+  this.compositeMaterial.uniforms["blurTexture2"].value = this.renderTargetsVertical[1].texture;
+  this.compositeMaterial.uniforms["blurTexture3"].value = this.renderTargetsVertical[2].texture;
+  this.compositeMaterial.uniforms["blurTexture4"].value = this.renderTargetsVertical[3].texture;
+  this.compositeMaterial.uniforms["blurTexture5"].value = this.renderTargetsVertical[4].texture;
+  this.compositeMaterial.uniforms["bloomStrength"].value = strength;
+  this.compositeMaterial.uniforms["bloomRadius"].value = 0.1;
+  this.compositeMaterial.needsUpdate = true;
+  var bloomFactors = [1.0, 0.8, 0.6, 0.4, 0.2];
+  this.compositeMaterial.uniforms["bloomFactors"].value = bloomFactors;
+  this.bloomTintColors = [new _threeModule.Vector3(1, 1, 1), new _threeModule.Vector3(1, 1, 1), new _threeModule.Vector3(1, 1, 1), new _threeModule.Vector3(1, 1, 1), new _threeModule.Vector3(1, 1, 1)];
+  this.compositeMaterial.uniforms["bloomTintColors"].value = this.bloomTintColors; // copy material
+
+  if (_CopyShader.CopyShader === undefined) {
+    console.error("UnrealBloomPass relies on CopyShader");
+  }
+
+  var copyShader = _CopyShader.CopyShader;
+  this.copyUniforms = _threeModule.UniformsUtils.clone(copyShader.uniforms);
+  this.copyUniforms["opacity"].value = 1.0;
+  this.materialCopy = new _threeModule.ShaderMaterial({
+    uniforms: this.copyUniforms,
+    vertexShader: copyShader.vertexShader,
+    fragmentShader: copyShader.fragmentShader,
+    blending: _threeModule.AdditiveBlending,
+    depthTest: false,
+    depthWrite: false,
+    transparent: true
+  });
+  this.enabled = true;
+  this.needsSwap = false;
+  this.oldClearColor = new _threeModule.Color();
+  this.oldClearAlpha = 1;
+  this.basic = new _threeModule.MeshBasicMaterial();
+  this.fsQuad = new _Pass.Pass.FullScreenQuad(null);
+};
+
+exports.UnrealBloomPass = UnrealBloomPass;
+UnrealBloomPass.prototype = Object.assign(Object.create(_Pass.Pass.prototype), {
+  constructor: UnrealBloomPass,
+  dispose: function () {
+    for (var i = 0; i < this.renderTargetsHorizontal.length; i++) {
+      this.renderTargetsHorizontal[i].dispose();
+    }
+
+    for (var i = 0; i < this.renderTargetsVertical.length; i++) {
+      this.renderTargetsVertical[i].dispose();
+    }
+
+    this.renderTargetBright.dispose();
+  },
+  setSize: function (width, height) {
+    var resx = Math.round(width / 2);
+    var resy = Math.round(height / 2);
+    this.renderTargetBright.setSize(resx, resy);
+
+    for (var i = 0; i < this.nMips; i++) {
+      this.renderTargetsHorizontal[i].setSize(resx, resy);
+      this.renderTargetsVertical[i].setSize(resx, resy);
+      this.separableBlurMaterials[i].uniforms["texSize"].value = new _threeModule.Vector2(resx, resy);
+      resx = Math.round(resx / 2);
+      resy = Math.round(resy / 2);
+    }
+  },
+  render: function (renderer, writeBuffer, readBuffer, deltaTime, maskActive) {
+    this.oldClearColor.copy(renderer.getClearColor());
+    this.oldClearAlpha = renderer.getClearAlpha();
+    var oldAutoClear = renderer.autoClear;
+    renderer.autoClear = false;
+    renderer.setClearColor(this.clearColor, 0);
+    if (maskActive) renderer.state.buffers.stencil.setTest(false); // Render input to screen
+
+    if (this.renderToScreen) {
+      this.fsQuad.material = this.basic;
+      this.basic.map = readBuffer.texture;
+      renderer.setRenderTarget(null);
+      renderer.clear();
+      this.fsQuad.render(renderer);
+    } // 1. Extract Bright Areas
+
+
+    this.highPassUniforms["tDiffuse"].value = readBuffer.texture;
+    this.highPassUniforms["luminosityThreshold"].value = this.threshold;
+    this.fsQuad.material = this.materialHighPassFilter;
+    renderer.setRenderTarget(this.renderTargetBright);
+    renderer.clear();
+    this.fsQuad.render(renderer); // 2. Blur All the mips progressively
+
+    var inputRenderTarget = this.renderTargetBright;
+
+    for (var i = 0; i < this.nMips; i++) {
+      this.fsQuad.material = this.separableBlurMaterials[i];
+      this.separableBlurMaterials[i].uniforms["colorTexture"].value = inputRenderTarget.texture;
+      this.separableBlurMaterials[i].uniforms["direction"].value = UnrealBloomPass.BlurDirectionX;
+      renderer.setRenderTarget(this.renderTargetsHorizontal[i]);
+      renderer.clear();
+      this.fsQuad.render(renderer);
+      this.separableBlurMaterials[i].uniforms["colorTexture"].value = this.renderTargetsHorizontal[i].texture;
+      this.separableBlurMaterials[i].uniforms["direction"].value = UnrealBloomPass.BlurDirectionY;
+      renderer.setRenderTarget(this.renderTargetsVertical[i]);
+      renderer.clear();
+      this.fsQuad.render(renderer);
+      inputRenderTarget = this.renderTargetsVertical[i];
+    } // Composite All the mips
+
+
+    this.fsQuad.material = this.compositeMaterial;
+    this.compositeMaterial.uniforms["bloomStrength"].value = this.strength;
+    this.compositeMaterial.uniforms["bloomRadius"].value = this.radius;
+    this.compositeMaterial.uniforms["bloomTintColors"].value = this.bloomTintColors;
+    renderer.setRenderTarget(this.renderTargetsHorizontal[0]);
+    renderer.clear();
+    this.fsQuad.render(renderer); // Blend it additively over the input texture
+
+    this.fsQuad.material = this.materialCopy;
+    this.copyUniforms["tDiffuse"].value = this.renderTargetsHorizontal[0].texture;
+    if (maskActive) renderer.state.buffers.stencil.setTest(true);
+
+    if (this.renderToScreen) {
+      renderer.setRenderTarget(null);
+      this.fsQuad.render(renderer);
+    } else {
+      renderer.setRenderTarget(readBuffer);
+      this.fsQuad.render(renderer);
+    } // Restore renderer settings
+
+
+    renderer.setClearColor(this.oldClearColor, this.oldClearAlpha);
+    renderer.autoClear = oldAutoClear;
+  },
+  getSeperableBlurMaterial: function (kernelRadius) {
+    return new _threeModule.ShaderMaterial({
+      defines: {
+        "KERNEL_RADIUS": kernelRadius,
+        "SIGMA": kernelRadius
+      },
+      uniforms: {
+        "colorTexture": {
+          value: null
+        },
+        "texSize": {
+          value: new _threeModule.Vector2(0.5, 0.5)
+        },
+        "direction": {
+          value: new _threeModule.Vector2(0.5, 0.5)
+        }
+      },
+      vertexShader: "varying vec2 vUv;\n\
+				void main() {\n\
+					vUv = uv;\n\
+					gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );\n\
+				}",
+      fragmentShader: "#include <common>\
+				varying vec2 vUv;\n\
+				uniform sampler2D colorTexture;\n\
+				uniform vec2 texSize;\
+				uniform vec2 direction;\
+				\
+				float gaussianPdf(in float x, in float sigma) {\
+					return 0.39894 * exp( -0.5 * x * x/( sigma * sigma))/sigma;\
+				}\
+				void main() {\n\
+					vec2 invSize = 1.0 / texSize;\
+					float fSigma = float(SIGMA);\
+					float weightSum = gaussianPdf(0.0, fSigma);\
+					vec3 diffuseSum = texture2D( colorTexture, vUv).rgb * weightSum;\
+					for( int i = 1; i < KERNEL_RADIUS; i ++ ) {\
+						float x = float(i);\
+						float w = gaussianPdf(x, fSigma);\
+						vec2 uvOffset = direction * invSize * x;\
+						vec3 sample1 = texture2D( colorTexture, vUv + uvOffset).rgb;\
+						vec3 sample2 = texture2D( colorTexture, vUv - uvOffset).rgb;\
+						diffuseSum += (sample1 + sample2) * w;\
+						weightSum += 2.0 * w;\
+					}\
+					gl_FragColor = vec4(diffuseSum/weightSum, 1.0);\n\
+				}"
+    });
+  },
+  getCompositeMaterial: function (nMips) {
+    return new _threeModule.ShaderMaterial({
+      defines: {
+        "NUM_MIPS": nMips
+      },
+      uniforms: {
+        "blurTexture1": {
+          value: null
+        },
+        "blurTexture2": {
+          value: null
+        },
+        "blurTexture3": {
+          value: null
+        },
+        "blurTexture4": {
+          value: null
+        },
+        "blurTexture5": {
+          value: null
+        },
+        "dirtTexture": {
+          value: null
+        },
+        "bloomStrength": {
+          value: 1.0
+        },
+        "bloomFactors": {
+          value: null
+        },
+        "bloomTintColors": {
+          value: null
+        },
+        "bloomRadius": {
+          value: 0.0
+        }
+      },
+      vertexShader: "varying vec2 vUv;\n\
+				void main() {\n\
+					vUv = uv;\n\
+					gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );\n\
+				}",
+      fragmentShader: "varying vec2 vUv;\
+				uniform sampler2D blurTexture1;\
+				uniform sampler2D blurTexture2;\
+				uniform sampler2D blurTexture3;\
+				uniform sampler2D blurTexture4;\
+				uniform sampler2D blurTexture5;\
+				uniform sampler2D dirtTexture;\
+				uniform float bloomStrength;\
+				uniform float bloomRadius;\
+				uniform float bloomFactors[NUM_MIPS];\
+				uniform vec3 bloomTintColors[NUM_MIPS];\
+				\
+				float lerpBloomFactor(const in float factor) { \
+					float mirrorFactor = 1.2 - factor;\
+					return mix(factor, mirrorFactor, bloomRadius);\
+				}\
+				\
+				void main() {\
+					gl_FragColor = bloomStrength * ( lerpBloomFactor(bloomFactors[0]) * vec4(bloomTintColors[0], 1.0) * texture2D(blurTexture1, vUv) + \
+													 lerpBloomFactor(bloomFactors[1]) * vec4(bloomTintColors[1], 1.0) * texture2D(blurTexture2, vUv) + \
+													 lerpBloomFactor(bloomFactors[2]) * vec4(bloomTintColors[2], 1.0) * texture2D(blurTexture3, vUv) + \
+													 lerpBloomFactor(bloomFactors[3]) * vec4(bloomTintColors[3], 1.0) * texture2D(blurTexture4, vUv) + \
+													 lerpBloomFactor(bloomFactors[4]) * vec4(bloomTintColors[4], 1.0) * texture2D(blurTexture5, vUv) );\
+				}"
+    });
+  }
+});
+UnrealBloomPass.BlurDirectionX = new _threeModule.Vector2(1.0, 0.0);
+UnrealBloomPass.BlurDirectionY = new _threeModule.Vector2(0.0, 1.0);
+},{"../../../build/three.module.js":"node_modules/three/build/three.module.js","../postprocessing/Pass.js":"node_modules/three/examples/jsm/postprocessing/Pass.js","../shaders/CopyShader.js":"node_modules/three/examples/jsm/shaders/CopyShader.js","../shaders/LuminosityHighPassShader.js":"node_modules/three/examples/jsm/shaders/LuminosityHighPassShader.js"}],"node_modules/three/examples/jsm/controls/OrbitControls.js":[function(require,module,exports) {
+"use strict";
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports.MapControls = exports.OrbitControls = void 0;
+
+var _threeModule = require("../../../build/three.module.js");
+
+/**
+ * @author qiao / https://github.com/qiao
+ * @author mrdoob / http://mrdoob.com
+ * @author alteredq / http://alteredqualia.com/
+ * @author WestLangley / http://github.com/WestLangley
+ * @author erich666 / http://erichaines.com
+ * @author ScieCode / http://github.com/sciecode
+ */
+// This set of controls performs orbiting, dollying (zooming), and panning.
+// Unlike TrackballControls, it maintains the "up" direction object.up (+Y by default).
+//
+//    Orbit - left mouse / touch: one-finger move
+//    Zoom - middle mouse, or mousewheel / touch: two-finger spread or squish
+//    Pan - right mouse, or left mouse + ctrl/meta/shiftKey, or arrow keys / touch: two-finger move
+var OrbitControls = function (object, domElement) {
+  if (domElement === undefined) console.warn('THREE.OrbitControls: The second parameter "domElement" is now mandatory.');
+  if (domElement === document) console.error('THREE.OrbitControls: "document" should not be used as the target "domElement". Please use "renderer.domElement" instead.');
+  this.object = object;
+  this.domElement = domElement; // Set to false to disable this control
+
+  this.enabled = true; // "target" sets the location of focus, where the object orbits around
+
+  this.target = new _threeModule.Vector3(); // How far you can dolly in and out ( PerspectiveCamera only )
+
+  this.minDistance = 0;
+  this.maxDistance = Infinity; // How far you can zoom in and out ( OrthographicCamera only )
+
+  this.minZoom = 0;
+  this.maxZoom = Infinity; // How far you can orbit vertically, upper and lower limits.
+  // Range is 0 to Math.PI radians.
+
+  this.minPolarAngle = 0; // radians
+
+  this.maxPolarAngle = Math.PI; // radians
+  // How far you can orbit horizontally, upper and lower limits.
+  // If set, must be a sub-interval of the interval [ - Math.PI, Math.PI ].
+
+  this.minAzimuthAngle = -Infinity; // radians
+
+  this.maxAzimuthAngle = Infinity; // radians
+  // Set to true to enable damping (inertia)
+  // If damping is enabled, you must call controls.update() in your animation loop
+
+  this.enableDamping = false;
+  this.dampingFactor = 0.05; // This option actually enables dollying in and out; left as "zoom" for backwards compatibility.
+  // Set to false to disable zooming
+
+  this.enableZoom = true;
+  this.zoomSpeed = 1.0; // Set to false to disable rotating
+
+  this.enableRotate = true;
+  this.rotateSpeed = 1.0; // Set to false to disable panning
+
+  this.enablePan = true;
+  this.panSpeed = 1.0;
+  this.screenSpacePanning = false; // if true, pan in screen-space
+
+  this.keyPanSpeed = 7.0; // pixels moved per arrow key push
+  // Set to true to automatically rotate around the target
+  // If auto-rotate is enabled, you must call controls.update() in your animation loop
+
+  this.autoRotate = false;
+  this.autoRotateSpeed = 2.0; // 30 seconds per round when fps is 60
+  // Set to false to disable use of the keys
+
+  this.enableKeys = true; // The four arrow keys
+
+  this.keys = {
+    LEFT: 37,
+    UP: 38,
+    RIGHT: 39,
+    BOTTOM: 40
+  }; // Mouse buttons
+
+  this.mouseButtons = {
+    LEFT: _threeModule.MOUSE.ROTATE,
+    MIDDLE: _threeModule.MOUSE.DOLLY,
+    RIGHT: _threeModule.MOUSE.PAN
+  }; // Touch fingers
+
+  this.touches = {
+    ONE: _threeModule.TOUCH.ROTATE,
+    TWO: _threeModule.TOUCH.DOLLY_PAN
+  }; // for reset
+
+  this.target0 = this.target.clone();
+  this.position0 = this.object.position.clone();
+  this.zoom0 = this.object.zoom; //
+  // public methods
+  //
+
+  this.getPolarAngle = function () {
+    return spherical.phi;
+  };
+
+  this.getAzimuthalAngle = function () {
+    return spherical.theta;
+  };
+
+  this.saveState = function () {
+    scope.target0.copy(scope.target);
+    scope.position0.copy(scope.object.position);
+    scope.zoom0 = scope.object.zoom;
+  };
+
+  this.reset = function () {
+    scope.target.copy(scope.target0);
+    scope.object.position.copy(scope.position0);
+    scope.object.zoom = scope.zoom0;
+    scope.object.updateProjectionMatrix();
+    scope.dispatchEvent(changeEvent);
+    scope.update();
+    state = STATE.NONE;
+  }; // this method is exposed, but perhaps it would be better if we can make it private...
+
+
+  this.update = function () {
+    var offset = new _threeModule.Vector3(); // so camera.up is the orbit axis
+
+    var quat = new _threeModule.Quaternion().setFromUnitVectors(object.up, new _threeModule.Vector3(0, 1, 0));
+    var quatInverse = quat.clone().inverse();
+    var lastPosition = new _threeModule.Vector3();
+    var lastQuaternion = new _threeModule.Quaternion();
+    return function update() {
+      var position = scope.object.position;
+      offset.copy(position).sub(scope.target); // rotate offset to "y-axis-is-up" space
+
+      offset.applyQuaternion(quat); // angle from z-axis around y-axis
+
+      spherical.setFromVector3(offset);
+
+      if (scope.autoRotate && state === STATE.NONE) {
+        rotateLeft(getAutoRotationAngle());
+      }
+
+      if (scope.enableDamping) {
+        spherical.theta += sphericalDelta.theta * scope.dampingFactor;
+        spherical.phi += sphericalDelta.phi * scope.dampingFactor;
+      } else {
+        spherical.theta += sphericalDelta.theta;
+        spherical.phi += sphericalDelta.phi;
+      } // restrict theta to be between desired limits
+
+
+      spherical.theta = Math.max(scope.minAzimuthAngle, Math.min(scope.maxAzimuthAngle, spherical.theta)); // restrict phi to be between desired limits
+
+      spherical.phi = Math.max(scope.minPolarAngle, Math.min(scope.maxPolarAngle, spherical.phi));
+      spherical.makeSafe();
+      spherical.radius *= scale; // restrict radius to be between desired limits
+
+      spherical.radius = Math.max(scope.minDistance, Math.min(scope.maxDistance, spherical.radius)); // move target to panned location
+
+      if (scope.enableDamping === true) {
+        scope.target.addScaledVector(panOffset, scope.dampingFactor);
+      } else {
+        scope.target.add(panOffset);
+      }
+
+      offset.setFromSpherical(spherical); // rotate offset back to "camera-up-vector-is-up" space
+
+      offset.applyQuaternion(quatInverse);
+      position.copy(scope.target).add(offset);
+      scope.object.lookAt(scope.target);
+
+      if (scope.enableDamping === true) {
+        sphericalDelta.theta *= 1 - scope.dampingFactor;
+        sphericalDelta.phi *= 1 - scope.dampingFactor;
+        panOffset.multiplyScalar(1 - scope.dampingFactor);
+      } else {
+        sphericalDelta.set(0, 0, 0);
+        panOffset.set(0, 0, 0);
+      }
+
+      scale = 1; // update condition is:
+      // min(camera displacement, camera rotation in radians)^2 > EPS
+      // using small-angle approximation cos(x/2) = 1 - x^2 / 8
+
+      if (zoomChanged || lastPosition.distanceToSquared(scope.object.position) > EPS || 8 * (1 - lastQuaternion.dot(scope.object.quaternion)) > EPS) {
+        scope.dispatchEvent(changeEvent);
+        lastPosition.copy(scope.object.position);
+        lastQuaternion.copy(scope.object.quaternion);
+        zoomChanged = false;
+        return true;
+      }
+
+      return false;
+    };
+  }();
+
+  this.dispose = function () {
+    scope.domElement.removeEventListener('contextmenu', onContextMenu, false);
+    scope.domElement.removeEventListener('mousedown', onMouseDown, false);
+    scope.domElement.removeEventListener('wheel', onMouseWheel, false);
+    scope.domElement.removeEventListener('touchstart', onTouchStart, false);
+    scope.domElement.removeEventListener('touchend', onTouchEnd, false);
+    scope.domElement.removeEventListener('touchmove', onTouchMove, false);
+    document.removeEventListener('mousemove', onMouseMove, false);
+    document.removeEventListener('mouseup', onMouseUp, false);
+    scope.domElement.removeEventListener('keydown', onKeyDown, false); //scope.dispatchEvent( { type: 'dispose' } ); // should this be added here?
+  }; //
+  // internals
+  //
+
+
+  var scope = this;
+  var changeEvent = {
+    type: 'change'
+  };
+  var startEvent = {
+    type: 'start'
+  };
+  var endEvent = {
+    type: 'end'
+  };
+  var STATE = {
+    NONE: -1,
+    ROTATE: 0,
+    DOLLY: 1,
+    PAN: 2,
+    TOUCH_ROTATE: 3,
+    TOUCH_PAN: 4,
+    TOUCH_DOLLY_PAN: 5,
+    TOUCH_DOLLY_ROTATE: 6
+  };
+  var state = STATE.NONE;
+  var EPS = 0.000001; // current position in spherical coordinates
+
+  var spherical = new _threeModule.Spherical();
+  var sphericalDelta = new _threeModule.Spherical();
+  var scale = 1;
+  var panOffset = new _threeModule.Vector3();
+  var zoomChanged = false;
+  var rotateStart = new _threeModule.Vector2();
+  var rotateEnd = new _threeModule.Vector2();
+  var rotateDelta = new _threeModule.Vector2();
+  var panStart = new _threeModule.Vector2();
+  var panEnd = new _threeModule.Vector2();
+  var panDelta = new _threeModule.Vector2();
+  var dollyStart = new _threeModule.Vector2();
+  var dollyEnd = new _threeModule.Vector2();
+  var dollyDelta = new _threeModule.Vector2();
+
+  function getAutoRotationAngle() {
+    return 2 * Math.PI / 60 / 60 * scope.autoRotateSpeed;
+  }
+
+  function getZoomScale() {
+    return Math.pow(0.95, scope.zoomSpeed);
+  }
+
+  function rotateLeft(angle) {
+    sphericalDelta.theta -= angle;
+  }
+
+  function rotateUp(angle) {
+    sphericalDelta.phi -= angle;
+  }
+
+  var panLeft = function () {
+    var v = new _threeModule.Vector3();
+    return function panLeft(distance, objectMatrix) {
+      v.setFromMatrixColumn(objectMatrix, 0); // get X column of objectMatrix
+
+      v.multiplyScalar(-distance);
+      panOffset.add(v);
+    };
+  }();
+
+  var panUp = function () {
+    var v = new _threeModule.Vector3();
+    return function panUp(distance, objectMatrix) {
+      if (scope.screenSpacePanning === true) {
+        v.setFromMatrixColumn(objectMatrix, 1);
+      } else {
+        v.setFromMatrixColumn(objectMatrix, 0);
+        v.crossVectors(scope.object.up, v);
+      }
+
+      v.multiplyScalar(distance);
+      panOffset.add(v);
+    };
+  }(); // deltaX and deltaY are in pixels; right and down are positive
+
+
+  var pan = function () {
+    var offset = new _threeModule.Vector3();
+    return function pan(deltaX, deltaY) {
+      var element = scope.domElement;
+
+      if (scope.object.isPerspectiveCamera) {
+        // perspective
+        var position = scope.object.position;
+        offset.copy(position).sub(scope.target);
+        var targetDistance = offset.length(); // half of the fov is center to top of screen
+
+        targetDistance *= Math.tan(scope.object.fov / 2 * Math.PI / 180.0); // we use only clientHeight here so aspect ratio does not distort speed
+
+        panLeft(2 * deltaX * targetDistance / element.clientHeight, scope.object.matrix);
+        panUp(2 * deltaY * targetDistance / element.clientHeight, scope.object.matrix);
+      } else if (scope.object.isOrthographicCamera) {
+        // orthographic
+        panLeft(deltaX * (scope.object.right - scope.object.left) / scope.object.zoom / element.clientWidth, scope.object.matrix);
+        panUp(deltaY * (scope.object.top - scope.object.bottom) / scope.object.zoom / element.clientHeight, scope.object.matrix);
+      } else {
+        // camera neither orthographic nor perspective
+        console.warn('WARNING: OrbitControls.js encountered an unknown camera type - pan disabled.');
+        scope.enablePan = false;
+      }
+    };
+  }();
+
+  function dollyIn(dollyScale) {
+    if (scope.object.isPerspectiveCamera) {
+      scale /= dollyScale;
+    } else if (scope.object.isOrthographicCamera) {
+      scope.object.zoom = Math.max(scope.minZoom, Math.min(scope.maxZoom, scope.object.zoom * dollyScale));
+      scope.object.updateProjectionMatrix();
+      zoomChanged = true;
+    } else {
+      console.warn('WARNING: OrbitControls.js encountered an unknown camera type - dolly/zoom disabled.');
+      scope.enableZoom = false;
+    }
+  }
+
+  function dollyOut(dollyScale) {
+    if (scope.object.isPerspectiveCamera) {
+      scale *= dollyScale;
+    } else if (scope.object.isOrthographicCamera) {
+      scope.object.zoom = Math.max(scope.minZoom, Math.min(scope.maxZoom, scope.object.zoom / dollyScale));
+      scope.object.updateProjectionMatrix();
+      zoomChanged = true;
+    } else {
+      console.warn('WARNING: OrbitControls.js encountered an unknown camera type - dolly/zoom disabled.');
+      scope.enableZoom = false;
+    }
+  } //
+  // event callbacks - update the object state
+  //
+
+
+  function handleMouseDownRotate(event) {
+    rotateStart.set(event.clientX, event.clientY);
+  }
+
+  function handleMouseDownDolly(event) {
+    dollyStart.set(event.clientX, event.clientY);
+  }
+
+  function handleMouseDownPan(event) {
+    panStart.set(event.clientX, event.clientY);
+  }
+
+  function handleMouseMoveRotate(event) {
+    rotateEnd.set(event.clientX, event.clientY);
+    rotateDelta.subVectors(rotateEnd, rotateStart).multiplyScalar(scope.rotateSpeed);
+    var element = scope.domElement;
+    rotateLeft(2 * Math.PI * rotateDelta.x / element.clientHeight); // yes, height
+
+    rotateUp(2 * Math.PI * rotateDelta.y / element.clientHeight);
+    rotateStart.copy(rotateEnd);
+    scope.update();
+  }
+
+  function handleMouseMoveDolly(event) {
+    dollyEnd.set(event.clientX, event.clientY);
+    dollyDelta.subVectors(dollyEnd, dollyStart);
+
+    if (dollyDelta.y > 0) {
+      dollyIn(getZoomScale());
+    } else if (dollyDelta.y < 0) {
+      dollyOut(getZoomScale());
+    }
+
+    dollyStart.copy(dollyEnd);
+    scope.update();
+  }
+
+  function handleMouseMovePan(event) {
+    panEnd.set(event.clientX, event.clientY);
+    panDelta.subVectors(panEnd, panStart).multiplyScalar(scope.panSpeed);
+    pan(panDelta.x, panDelta.y);
+    panStart.copy(panEnd);
+    scope.update();
+  }
+
+  function handleMouseUp()
+  /*event*/
+  {// no-op
+  }
+
+  function handleMouseWheel(event) {
+    if (event.deltaY < 0) {
+      dollyOut(getZoomScale());
+    } else if (event.deltaY > 0) {
+      dollyIn(getZoomScale());
+    }
+
+    scope.update();
+  }
+
+  function handleKeyDown(event) {
+    var needsUpdate = false;
+
+    switch (event.keyCode) {
+      case scope.keys.UP:
+        pan(0, scope.keyPanSpeed);
+        needsUpdate = true;
+        break;
+
+      case scope.keys.BOTTOM:
+        pan(0, -scope.keyPanSpeed);
+        needsUpdate = true;
+        break;
+
+      case scope.keys.LEFT:
+        pan(scope.keyPanSpeed, 0);
+        needsUpdate = true;
+        break;
+
+      case scope.keys.RIGHT:
+        pan(-scope.keyPanSpeed, 0);
+        needsUpdate = true;
+        break;
+    }
+
+    if (needsUpdate) {
+      // prevent the browser from scrolling on cursor keys
+      event.preventDefault();
+      scope.update();
+    }
+  }
+
+  function handleTouchStartRotate(event) {
+    if (event.touches.length == 1) {
+      rotateStart.set(event.touches[0].pageX, event.touches[0].pageY);
+    } else {
+      var x = 0.5 * (event.touches[0].pageX + event.touches[1].pageX);
+      var y = 0.5 * (event.touches[0].pageY + event.touches[1].pageY);
+      rotateStart.set(x, y);
+    }
+  }
+
+  function handleTouchStartPan(event) {
+    if (event.touches.length == 1) {
+      panStart.set(event.touches[0].pageX, event.touches[0].pageY);
+    } else {
+      var x = 0.5 * (event.touches[0].pageX + event.touches[1].pageX);
+      var y = 0.5 * (event.touches[0].pageY + event.touches[1].pageY);
+      panStart.set(x, y);
+    }
+  }
+
+  function handleTouchStartDolly(event) {
+    var dx = event.touches[0].pageX - event.touches[1].pageX;
+    var dy = event.touches[0].pageY - event.touches[1].pageY;
+    var distance = Math.sqrt(dx * dx + dy * dy);
+    dollyStart.set(0, distance);
+  }
+
+  function handleTouchStartDollyPan(event) {
+    if (scope.enableZoom) handleTouchStartDolly(event);
+    if (scope.enablePan) handleTouchStartPan(event);
+  }
+
+  function handleTouchStartDollyRotate(event) {
+    if (scope.enableZoom) handleTouchStartDolly(event);
+    if (scope.enableRotate) handleTouchStartRotate(event);
+  }
+
+  function handleTouchMoveRotate(event) {
+    if (event.touches.length == 1) {
+      rotateEnd.set(event.touches[0].pageX, event.touches[0].pageY);
+    } else {
+      var x = 0.5 * (event.touches[0].pageX + event.touches[1].pageX);
+      var y = 0.5 * (event.touches[0].pageY + event.touches[1].pageY);
+      rotateEnd.set(x, y);
+    }
+
+    rotateDelta.subVectors(rotateEnd, rotateStart).multiplyScalar(scope.rotateSpeed);
+    var element = scope.domElement;
+    rotateLeft(2 * Math.PI * rotateDelta.x / element.clientHeight); // yes, height
+
+    rotateUp(2 * Math.PI * rotateDelta.y / element.clientHeight);
+    rotateStart.copy(rotateEnd);
+  }
+
+  function handleTouchMovePan(event) {
+    if (event.touches.length == 1) {
+      panEnd.set(event.touches[0].pageX, event.touches[0].pageY);
+    } else {
+      var x = 0.5 * (event.touches[0].pageX + event.touches[1].pageX);
+      var y = 0.5 * (event.touches[0].pageY + event.touches[1].pageY);
+      panEnd.set(x, y);
+    }
+
+    panDelta.subVectors(panEnd, panStart).multiplyScalar(scope.panSpeed);
+    pan(panDelta.x, panDelta.y);
+    panStart.copy(panEnd);
+  }
+
+  function handleTouchMoveDolly(event) {
+    var dx = event.touches[0].pageX - event.touches[1].pageX;
+    var dy = event.touches[0].pageY - event.touches[1].pageY;
+    var distance = Math.sqrt(dx * dx + dy * dy);
+    dollyEnd.set(0, distance);
+    dollyDelta.set(0, Math.pow(dollyEnd.y / dollyStart.y, scope.zoomSpeed));
+    dollyIn(dollyDelta.y);
+    dollyStart.copy(dollyEnd);
+  }
+
+  function handleTouchMoveDollyPan(event) {
+    if (scope.enableZoom) handleTouchMoveDolly(event);
+    if (scope.enablePan) handleTouchMovePan(event);
+  }
+
+  function handleTouchMoveDollyRotate(event) {
+    if (scope.enableZoom) handleTouchMoveDolly(event);
+    if (scope.enableRotate) handleTouchMoveRotate(event);
+  }
+
+  function handleTouchEnd()
+  /*event*/
+  {} // no-op
+  //
+  // event handlers - FSM: listen for events and reset state
+  //
+
+
+  function onMouseDown(event) {
+    if (scope.enabled === false) return; // Prevent the browser from scrolling.
+
+    event.preventDefault(); // Manually set the focus since calling preventDefault above
+    // prevents the browser from setting it automatically.
+
+    scope.domElement.focus ? scope.domElement.focus() : window.focus();
+
+    switch (event.button) {
+      case 0:
+        switch (scope.mouseButtons.LEFT) {
+          case _threeModule.MOUSE.ROTATE:
+            if (event.ctrlKey || event.metaKey || event.shiftKey) {
+              if (scope.enablePan === false) return;
+              handleMouseDownPan(event);
+              state = STATE.PAN;
+            } else {
+              if (scope.enableRotate === false) return;
+              handleMouseDownRotate(event);
+              state = STATE.ROTATE;
+            }
+
+            break;
+
+          case _threeModule.MOUSE.PAN:
+            if (event.ctrlKey || event.metaKey || event.shiftKey) {
+              if (scope.enableRotate === false) return;
+              handleMouseDownRotate(event);
+              state = STATE.ROTATE;
+            } else {
+              if (scope.enablePan === false) return;
+              handleMouseDownPan(event);
+              state = STATE.PAN;
+            }
+
+            break;
+
+          default:
+            state = STATE.NONE;
+        }
+
+        break;
+
+      case 1:
+        switch (scope.mouseButtons.MIDDLE) {
+          case _threeModule.MOUSE.DOLLY:
+            if (scope.enableZoom === false) return;
+            handleMouseDownDolly(event);
+            state = STATE.DOLLY;
+            break;
+
+          default:
+            state = STATE.NONE;
+        }
+
+        break;
+
+      case 2:
+        switch (scope.mouseButtons.RIGHT) {
+          case _threeModule.MOUSE.ROTATE:
+            if (scope.enableRotate === false) return;
+            handleMouseDownRotate(event);
+            state = STATE.ROTATE;
+            break;
+
+          case _threeModule.MOUSE.PAN:
+            if (scope.enablePan === false) return;
+            handleMouseDownPan(event);
+            state = STATE.PAN;
+            break;
+
+          default:
+            state = STATE.NONE;
+        }
+
+        break;
+    }
+
+    if (state !== STATE.NONE) {
+      document.addEventListener('mousemove', onMouseMove, false);
+      document.addEventListener('mouseup', onMouseUp, false);
+      scope.dispatchEvent(startEvent);
+    }
+  }
+
+  function onMouseMove(event) {
+    if (scope.enabled === false) return;
+    event.preventDefault();
+
+    switch (state) {
+      case STATE.ROTATE:
+        if (scope.enableRotate === false) return;
+        handleMouseMoveRotate(event);
+        break;
+
+      case STATE.DOLLY:
+        if (scope.enableZoom === false) return;
+        handleMouseMoveDolly(event);
+        break;
+
+      case STATE.PAN:
+        if (scope.enablePan === false) return;
+        handleMouseMovePan(event);
+        break;
+    }
+  }
+
+  function onMouseUp(event) {
+    if (scope.enabled === false) return;
+    handleMouseUp(event);
+    document.removeEventListener('mousemove', onMouseMove, false);
+    document.removeEventListener('mouseup', onMouseUp, false);
+    scope.dispatchEvent(endEvent);
+    state = STATE.NONE;
+  }
+
+  function onMouseWheel(event) {
+    if (scope.enabled === false || scope.enableZoom === false || state !== STATE.NONE && state !== STATE.ROTATE) return;
+    event.preventDefault();
+    event.stopPropagation();
+    scope.dispatchEvent(startEvent);
+    handleMouseWheel(event);
+    scope.dispatchEvent(endEvent);
+  }
+
+  function onKeyDown(event) {
+    if (scope.enabled === false || scope.enableKeys === false || scope.enablePan === false) return;
+    handleKeyDown(event);
+  }
+
+  function onTouchStart(event) {
+    if (scope.enabled === false) return;
+    event.preventDefault();
+
+    switch (event.touches.length) {
+      case 1:
+        switch (scope.touches.ONE) {
+          case _threeModule.TOUCH.ROTATE:
+            if (scope.enableRotate === false) return;
+            handleTouchStartRotate(event);
+            state = STATE.TOUCH_ROTATE;
+            break;
+
+          case _threeModule.TOUCH.PAN:
+            if (scope.enablePan === false) return;
+            handleTouchStartPan(event);
+            state = STATE.TOUCH_PAN;
+            break;
+
+          default:
+            state = STATE.NONE;
+        }
+
+        break;
+
+      case 2:
+        switch (scope.touches.TWO) {
+          case _threeModule.TOUCH.DOLLY_PAN:
+            if (scope.enableZoom === false && scope.enablePan === false) return;
+            handleTouchStartDollyPan(event);
+            state = STATE.TOUCH_DOLLY_PAN;
+            break;
+
+          case _threeModule.TOUCH.DOLLY_ROTATE:
+            if (scope.enableZoom === false && scope.enableRotate === false) return;
+            handleTouchStartDollyRotate(event);
+            state = STATE.TOUCH_DOLLY_ROTATE;
+            break;
+
+          default:
+            state = STATE.NONE;
+        }
+
+        break;
+
+      default:
+        state = STATE.NONE;
+    }
+
+    if (state !== STATE.NONE) {
+      scope.dispatchEvent(startEvent);
+    }
+  }
+
+  function onTouchMove(event) {
+    if (scope.enabled === false) return;
+    event.preventDefault();
+    event.stopPropagation();
+
+    switch (state) {
+      case STATE.TOUCH_ROTATE:
+        if (scope.enableRotate === false) return;
+        handleTouchMoveRotate(event);
+        scope.update();
+        break;
+
+      case STATE.TOUCH_PAN:
+        if (scope.enablePan === false) return;
+        handleTouchMovePan(event);
+        scope.update();
+        break;
+
+      case STATE.TOUCH_DOLLY_PAN:
+        if (scope.enableZoom === false && scope.enablePan === false) return;
+        handleTouchMoveDollyPan(event);
+        scope.update();
+        break;
+
+      case STATE.TOUCH_DOLLY_ROTATE:
+        if (scope.enableZoom === false && scope.enableRotate === false) return;
+        handleTouchMoveDollyRotate(event);
+        scope.update();
+        break;
+
+      default:
+        state = STATE.NONE;
+    }
+  }
+
+  function onTouchEnd(event) {
+    if (scope.enabled === false) return;
+    handleTouchEnd(event);
+    scope.dispatchEvent(endEvent);
+    state = STATE.NONE;
+  }
+
+  function onContextMenu(event) {
+    if (scope.enabled === false) return;
+    event.preventDefault();
+  } //
+
+
+  scope.domElement.addEventListener('contextmenu', onContextMenu, false);
+  scope.domElement.addEventListener('mousedown', onMouseDown, false);
+  scope.domElement.addEventListener('wheel', onMouseWheel, false);
+  scope.domElement.addEventListener('touchstart', onTouchStart, false);
+  scope.domElement.addEventListener('touchend', onTouchEnd, false);
+  scope.domElement.addEventListener('touchmove', onTouchMove, false);
+  scope.domElement.addEventListener('keydown', onKeyDown, false); // make sure element can receive keys.
+
+  if (scope.domElement.tabIndex === -1) {
+    scope.domElement.tabIndex = 0;
+  } // force an update at start
+
+
+  this.update();
+};
+
+exports.OrbitControls = OrbitControls;
+OrbitControls.prototype = Object.create(_threeModule.EventDispatcher.prototype);
+OrbitControls.prototype.constructor = OrbitControls; // This set of controls performs orbiting, dollying (zooming), and panning.
+// Unlike TrackballControls, it maintains the "up" direction object.up (+Y by default).
+// This is very similar to OrbitControls, another set of touch behavior
+//
+//    Orbit - right mouse, or left mouse + ctrl/meta/shiftKey / touch: two-finger rotate
+//    Zoom - middle mouse, or mousewheel / touch: two-finger spread or squish
+//    Pan - left mouse, or arrow keys / touch: one-finger move
+
+var MapControls = function (object, domElement) {
+  OrbitControls.call(this, object, domElement);
+  this.mouseButtons.LEFT = _threeModule.MOUSE.PAN;
+  this.mouseButtons.RIGHT = _threeModule.MOUSE.ROTATE;
+  this.touches.ONE = _threeModule.TOUCH.PAN;
+  this.touches.TWO = _threeModule.TOUCH.DOLLY_ROTATE;
+};
+
+exports.MapControls = MapControls;
+MapControls.prototype = Object.create(_threeModule.EventDispatcher.prototype);
+MapControls.prototype.constructor = MapControls;
+},{"../../../build/three.module.js":"node_modules/three/build/three.module.js"}],"src/settings.js":[function(require,module,exports) {
+"use strict";
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports.Settings = void 0;
+// eslint-disable-next-line import/prefer-default-export
+var Settings = {
+  // points settings
+  POINTS_COUNT: 1000,
+  POINTS_SPREAD: 500,
+  // area for looking points to connect
+  NEAR_BORDER: 200,
+  FAR_BORDER: 300,
+  // camera clipping
+  CLIPPING_NEAR: 1,
+  CLIPPING_FAR: 10000,
+  // links
+  LINK_SEGMENT_LENGTH: 30,
+  LINK_STEP_TIME: 1500,
+  LINK_LINE_WIDTH: 3,
+  // link's segments
+  SEGMENT_STATE_COUNT: 5,
+  // equals to length of visible segments
+  SEGMENT_MIN_DISTORTION: 10,
+  SEGMENT_MAX_DISTORTION: 20
+};
+exports.Settings = Settings;
+},{}],"src/link.js":[function(require,module,exports) {
+"use strict";
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports.default = void 0;
+
+var THREE = _interopRequireWildcard(require("three"));
+
+var _settings = require("./settings");
+
+function _getRequireWildcardCache() { if (typeof WeakMap !== "function") return null; var cache = new WeakMap(); _getRequireWildcardCache = function () { return cache; }; return cache; }
+
+function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj; } var cache = _getRequireWildcardCache(); if (cache && cache.has(obj)) { return cache.get(obj); } var newObj = {}; if (obj != null) { var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor; for (var key in obj) { if (Object.prototype.hasOwnProperty.call(obj, key)) { var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null; if (desc && (desc.get || desc.set)) { Object.defineProperty(newObj, key, desc); } else { newObj[key] = obj[key]; } } } } newObj.default = obj; if (cache) { cache.set(obj, newObj); } return newObj; }
+
+function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
+
+function _defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } }
+
+function _createClass(Constructor, protoProps, staticProps) { if (protoProps) _defineProperties(Constructor.prototype, protoProps); if (staticProps) _defineProperties(Constructor, staticProps); return Constructor; }
+
+var Link =
+/*#__PURE__*/
+function () {
+  function Link(v1, v2, scene) {
+    _classCallCheck(this, Link);
+
+    this.start = v1.clone();
+    this.end = v2.clone();
+    this.vec = v2.clone().sub(v1);
+    this.scene = scene;
+    this.length = this.start.distanceTo(this.end);
+    this.points = [];
+    this.stateColors = [];
+    var v = this.end.clone().sub(this.start).normalize().multiplyScalar(_settings.Settings.LINK_SEGMENT_LENGTH);
+    this.points.push(this.start);
+    var cl = _settings.Settings.LINK_SEGMENT_LENGTH;
+    var lastPoint = this.start;
+
+    while (cl < this.length) {
+      lastPoint = lastPoint.clone().add(v); // add distortion
+
+      lastPoint.add(this.calculateRandomPerpendicularV());
+      this.points.push(lastPoint);
+      cl += _settings.Settings.LINK_SEGMENT_LENGTH;
+    }
+
+    this.points.push(this.end);
+    this.linkSegmentsCount = Math.ceil(this.length / _settings.Settings.LINK_SEGMENT_LENGTH);
+    this.segments = [];
+    var positions = []; // create segments and their states
+    // every segment is not drawn for now
+
+    for (var i = 0; i < this.linkSegmentsCount; i += 1) {
+      var segment = {
+        index: i,
+        state: 0,
+        active: false,
+        line: null,
+        // length: this.points[i].distanceTo(this.points[i + 1]),
+        startV: this.points[i],
+        endV: this.points[i + 1],
+        v: this.points[i + 1].clone().sub(this.points[i])
+      };
+      this.segments.push(segment); // pushing positions of vertices for geometry
+
+      positions.push(this.points[i].x, this.points[i].y, this.points[i].z);
+    } // pushing last point
+
+
+    positions.push(this.points[this.linkSegmentsCount].x, this.points[this.linkSegmentsCount].y, this.points[this.linkSegmentsCount].z);
+    this.drawTime = 0; // setting up colors for each state
+
+    var step = 1 / _settings.Settings.SEGMENT_STATE_COUNT;
+    var c = 1.0;
+
+    for (var _i = 0; _i < _settings.Settings.SEGMENT_STATE_COUNT; _i += 1) {
+      this.stateColors.push({
+        beginColor: c,
+        endColor: c - step
+      });
+      c -= step;
+    }
+
+    var colors = []; // setting up colors for buffer attribute
+
+    for (var _i2 = 0; _i2 < this.linkSegmentsCount + 1; _i2 += 1) {
+      var color = new THREE.Color();
+      color.setRGB(1.0, 0.0, 0.0);
+      colors.push(color.r);
+      colors.push(color.g);
+      colors.push(color.b);
+    }
+
+    this.geometry = new THREE.BufferGeometry();
+    var vertices = new Float32Array(positions); // console.log(vertices);
+
+    this.geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+    this.geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    var material = new THREE.LineBasicMaterial({
+      // color: 0xffffff,
+      linewidth: _settings.Settings.LINK_LINE_WIDTH,
+      vertexColors: THREE.VertexColors
+    });
+    this.line = new THREE.Line(this.geometry, material); // do not draw anything for start
+
+    this.geometry.setDrawRange(0, 0);
+    this.scene.add(this.line);
+  }
+
+  _createClass(Link, [{
+    key: "calculateRandomPerpendicularV",
+    value: function calculateRandomPerpendicularV() {
+      var norm = this.vec.clone().normalize(); // const norm = new THREE.Vector3(1, 0, 0);
+
+      var e = new THREE.Euler(Math.PI / 2, Math.PI / 2, Math.PI / 2);
+      var tangent = norm.clone();
+      tangent.cross(norm.clone().applyEuler(e));
+      var bitangent = norm.clone();
+      bitangent.cross(tangent);
+      var a = THREE.Math.randFloat(-Math.PI, Math.PI);
+      var result = tangent.clone();
+      result.multiplyScalar(Math.sin(a));
+      result.add(bitangent.clone().multiplyScalar(Math.cos(a))).normalize();
+      var len = THREE.Math.randFloat(_settings.Settings.SEGMENT_MIN_DISTORTION, _settings.Settings.SEGMENT_MAX_DISTORTION);
+      return result.multiplyScalar(len);
+    }
+  }, {
+    key: "processLink",
+    value: function processLink() {
+      var _this = this;
+
+      // if nothing to draw then return
+      if (this.segments.length === 0) {
+        return;
+      }
+
+      var t = Date.now(); // if it is time to draw
+
+      if (t < this.drawTime) {
+        return;
+      }
+
+      this.drawTime = t + _settings.Settings.LINK_STEP_TIME; // cycle through segments and change states
+
+      for (var i = 0; i < this.segments.length; i += 1) {
+        // if first segment is inactive than activate it and do nothing more
+        if (i === 0 && !this.segments[i].active && this.segments[i].state === 0) {
+          this.segments[i].active = true; // this.segments[i].state = 1;
+          // // then activate next segment
+          // if ((i + 1) < this.segments.length) {
+          //   this.segments[i + 1].active = true;
+          // }
+
+          break;
+        } else {
+          // add state to all active segments
+          if (this.segments[i].active) {
+            this.segments[i].state += 1;
+          } // deactivate segments with state too large
+
+
+          if (this.segments[i].state >= _settings.Settings.SEGMENT_STATE_COUNT) {
+            this.segments[i].active = false;
+          } // if this segment has state 1 then activate next segment
+
+
+          if (this.segments[i].state === 1 && i + 1 < this.segments.length) {
+            this.segments[i + 1].active = true; // do not process further
+
+            break;
+          }
+        }
+      } // filter out segments which cycled through all states
+
+
+      this.segments = this.segments.filter(function (e) {
+        return e.state < _settings.Settings.SEGMENT_STATE_COUNT;
+      }); // if segments are zero count then destroy link
+
+      if (this.segments.length === 0) {
+        this.destoryLink();
+        return;
+      } // finding begining and ending index of verticles
+
+
+      var beginV = -1;
+      var endV = 0;
+      this.segments.forEach(function (s) {
+        // console.log(`segment: ${s.index}, state: ${s.state}`);
+        if (!s.active) {
+          return;
+        }
+
+        if (beginV === -1) {
+          beginV = s.index;
+        }
+
+        endV = s.index + 1;
+      }); // console.log(`begin: ${beginV}, count: ${endV - beginV + 1}`);
+      // console.log(this.segments);
+      // + 1 becouse count is number of vertices, 2 per segment
+
+      this.geometry.setDrawRange(beginV, endV - beginV + 1); // setting up colors
+
+      var colors = this.geometry.attributes.color.array;
+      this.segments.forEach(function (s) {
+        if (!s.active) {
+          // colors[s.index * 3] = 0;
+          // colors[(s.index * 3) + 1] = 0;
+          // colors[(s.index * 3) + 2] = 0;
+          // colors[(s.index * 3) + 3] = 0;
+          // colors[(s.index * 3) + 4] = 0;
+          // colors[(s.index * 3) + 5] = 0;
+          return;
+        }
+
+        var c = _this.stateColors[s.state];
+        colors[s.index * 3] = c.endColor;
+        colors[s.index * 3 + 1] = c.endColor;
+        colors[s.index * 3 + 2] = c.endColor;
+        colors[s.index * 3 + 3] = c.beginColor;
+        colors[s.index * 3 + 4] = c.beginColor;
+        colors[s.index * 3 + 5] = c.beginColor;
+      }); // console.log(colors);
+
+      this.geometry.attributes.color.needsUpdate = true;
+    }
+  }, {
+    key: "destoryLink",
+    value: function destoryLink() {
+      // clearing link data
+      this.segments = [];
+      this.scene.remove(this.line);
+    }
+  }]);
+
+  return Link;
+}();
+
+var _default = Link;
+exports.default = _default;
+},{"three":"node_modules/three/build/three.module.js","./settings":"src/settings.js"}],"src/signal.js":[function(require,module,exports) {
+"use strict";
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports.default = void 0;
+
+function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
+
+var Signal = function Signal() {
+  _classCallCheck(this, Signal);
+
+  this.a = 1;
+};
+
+var _default = Signal;
+exports.default = _default;
+},{}],"src/app.js":[function(require,module,exports) {
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -35429,17 +36901,33 @@ var THREE = _interopRequireWildcard(require("three"));
 
 var _stats = _interopRequireDefault(require("../node_modules/three/examples/jsm/libs/stats.module"));
 
-var _EffectComposer = require("../node_modules/three/examples/jsm/postprocessing/EffectComposer.js");
+var _EffectComposer = require("../node_modules/three/examples/jsm/postprocessing/EffectComposer");
 
-var _RenderPass = require("../node_modules/three/examples/jsm/postprocessing/RenderPass.js");
+var _RenderPass = require("../node_modules/three/examples/jsm/postprocessing/RenderPass");
 
-var _ShaderPass = require("../node_modules/three/examples/jsm/postprocessing/ShaderPass.js");
+var _UnrealBloomPass = require("../node_modules/three/examples/jsm/postprocessing/UnrealBloomPass");
+
+var _OrbitControls = require("../node_modules/three/examples/jsm/controls/OrbitControls");
+
+var _settings = require("./settings");
+
+var _link = _interopRequireDefault(require("./link"));
+
+var _signal = _interopRequireDefault(require("./signal"));
 
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
 function _getRequireWildcardCache() { if (typeof WeakMap !== "function") return null; var cache = new WeakMap(); _getRequireWildcardCache = function () { return cache; }; return cache; }
 
 function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj; } var cache = _getRequireWildcardCache(); if (cache && cache.has(obj)) { return cache.get(obj); } var newObj = {}; if (obj != null) { var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor; for (var key in obj) { if (Object.prototype.hasOwnProperty.call(obj, key)) { var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null; if (desc && (desc.get || desc.set)) { Object.defineProperty(newObj, key, desc); } else { newObj[key] = obj[key]; } } } } newObj.default = obj; if (cache) { cache.set(obj, newObj); } return newObj; }
+
+function _toConsumableArray(arr) { return _arrayWithoutHoles(arr) || _iterableToArray(arr) || _nonIterableSpread(); }
+
+function _nonIterableSpread() { throw new TypeError("Invalid attempt to spread non-iterable instance"); }
+
+function _iterableToArray(iter) { if (Symbol.iterator in Object(iter) || Object.prototype.toString.call(iter) === "[object Arguments]") return Array.from(iter); }
+
+function _arrayWithoutHoles(arr) { if (Array.isArray(arr)) { for (var i = 0, arr2 = new Array(arr.length); i < arr.length; i++) { arr2[i] = arr[i]; } return arr2; } }
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 
@@ -35453,22 +36941,23 @@ function () {
   function App(nodeElement) {
     _classCallCheck(this, App);
 
-    // settings
-    this.clippingNear = 1;
-    this.clippingFar = 10000;
-    this.pointsCount = 1000;
-    this.points = null;
-    this.pointsSpread = 500;
+    // threejs points
+    this.points = null; // additional data for points
+
+    this.pointsData = null;
+    this.links = null;
     this.nodeElement = nodeElement;
   }
 
   _createClass(App, [{
     key: "createScene",
     value: function createScene() {
-      this.scene = new THREE.Scene(); // this.scene.fog = new THREE.FogExp2(0x000000, 0.01);
+      this.scene = new THREE.Scene();
+      this.scene.fog = new THREE.Fog(0x000000, 200, 600); // this.scene.fog = new THREE.FogExp2(0x000000, 0.01);
       // this.scene.background = new THREE.Color(0x050505);
 
-      this.camera = new THREE.PerspectiveCamera(75, this.nodeElement.clientWidth / this.nodeElement.clientHeight, this.clippingNear, this.clippingFar);
+      this.camera = new THREE.PerspectiveCamera(75, this.nodeElement.clientWidth / this.nodeElement.clientHeight, _settings.Settings.CLIPPING_NEAR, _settings.Settings.CLIPPING_FAR);
+      this.camera.position.z = 400;
       this.renderer = new THREE.WebGLRenderer({
         antialias: true
       });
@@ -35476,84 +36965,99 @@ function () {
       this.nodeElement.appendChild(this.renderer.domElement);
       this.stats = new _stats.default();
       this.nodeElement.appendChild(this.stats.dom);
-      this.placeCamera(); // this.createTestGeometry();
-
+      this.controls = new _OrbitControls.OrbitControls(this.camera, this.renderer.domElement);
+      this.controls.update();
       this.generatePoints();
+      this.generatePointsData(); // calculating distances for each point to other connectable points
+
+      this.calculateDistances();
+      this.renderScene = new _RenderPass.RenderPass(this.scene, this.camera);
+      this.bloomPass = new _UnrealBloomPass.UnrealBloomPass(new THREE.Vector2(this.nodeElement.clientWidth, this.nodeElement.clientHeight), 1.5, 0.4, 0.85);
+      this.bloomPass.threshold = 0;
+      this.bloomPass.strength = 1.5;
+      this.bloomPass.radius = 0;
+      this.composer = new _EffectComposer.EffectComposer(this.renderer);
+      this.composer.addPass(this.renderScene);
+      this.composer.addPass(this.bloomPass);
       this.animate();
+      this.drawLine();
+      this.generateTestLink();
     }
   }, {
-    key: "placeCamera",
-    value: function placeCamera() {
-      this.camera.position.z = 400;
-    }
-  }, {
-    key: "createTestGeometry",
-    value: function createTestGeometry() {
-      // test geometry
-      var geometry = new THREE.BoxGeometry(10, 10, 10);
-      var material = new THREE.MeshBasicMaterial({
-        color: 0x00ff00
-      });
-      this.cube = new THREE.Mesh(geometry, material);
-      this.scene.add(this.cube);
-    }
-  }, {
-    key: "animate",
-    value: function animate() {
-      var _this = this;
+    key: "generatePointsData",
+    value: function generatePointsData() {
+      this.pointsData = [];
 
-      requestAnimationFrame(function () {
-        _this.animate();
-      }); // this.cube.rotation.x += 0.01;
-      // this.cube.rotation.y += 0.01;
+      for (var i = 0; i < _settings.Settings.POINTS_COUNT; i += 1) {
+        this.pointsData.push({
+          neighbours: []
+        });
+      }
+    }
+  }, {
+    key: "calculateDistances",
+    value: function calculateDistances() {
+      // console.log('Calculating distances - start');
+      var j = 0;
 
-      var time = Date.now() * 0.0005;
-      this.points.rotation.x = time * 0.25;
-      this.points.rotation.y = time * 0.5;
-      this.stats.update();
-      this.renderer.render(this.scene, this.camera);
+      for (var i = 0; i < _settings.Settings.POINTS_COUNT * 3; i += 3) {
+        var v = new THREE.Vector3();
+        v.fromBufferAttribute(this.points.geometry.attributes.position, i); // searching for points in distance range
+
+        for (var k = 0; k < _settings.Settings.POINTS_COUNT * 3; k += 3) {
+          var v2 = new THREE.Vector3();
+          v2.fromBufferAttribute(this.points.geometry.attributes.position, k);
+          var d = v.distanceTo(v2);
+
+          if (d > _settings.Settings.NEAR_BORDER && d < _settings.Settings.FAR_BORDER) {
+            // pushing to array of point neighbours
+            this.pointsData[j].neighbours.push(k / 3);
+          }
+        }
+
+        j += 1;
+      } // console.log('Calculating distances - finished');
+
     }
   }, {
     key: "generatePoints",
     value: function generatePoints() {
       // generate random point position
-      var positions = new Float32Array(this.pointsCount * 3);
-      var scale = new Float32Array(this.pointsCount);
-      var colors = new Float32Array(this.pointsCount * 3);
+      var positions = new Float32Array(_settings.Settings.POINTS_COUNT * 3);
+      var scale = new Float32Array(_settings.Settings.POINTS_COUNT);
+      var colors = new Float32Array(_settings.Settings.POINTS_COUNT * 3);
+      var color1 = new THREE.Color();
+      var color2 = new THREE.Color(); // color.setHSL(0.6, 0.75, 0.25);
+
+      color1.setRGB(0.9, 0.9, 0.9);
+      color2.setRGB(0.0, 0.9, 0.1);
       var j = 0;
-      var color = new THREE.Color(); // color.setHSL(0.6, 0.75, 0.25);
 
-      color.setRGB(0.9, 0.1, 0.1);
+      for (var i = 0; i < _settings.Settings.POINTS_COUNT * 3; i += 3) {
+        positions[i] = THREE.Math.randFloatSpread(_settings.Settings.POINTS_SPREAD); // x
 
-      for (var i = 0; i < this.pointsCount * 3; i += 3) {
-        positions[i] = THREE.Math.randFloatSpread(this.pointsSpread); // x
+        positions[i + 1] = THREE.Math.randFloatSpread(_settings.Settings.POINTS_SPREAD); // y
 
-        positions[i + 1] = THREE.Math.randFloatSpread(this.pointsSpread); // y
+        positions[i + 2] = THREE.Math.randFloatSpread(_settings.Settings.POINTS_SPREAD); // z
 
-        positions[i + 2] = THREE.Math.randFloatSpread(this.pointsSpread); // z
+        if (j % 10 === 0) {
+          scale[j] = 10;
+          color2.toArray(colors, j * 3);
+        } else {
+          scale[j] = 3;
+          color1.toArray(colors, j * 3);
+        }
 
-        scale[j] = 10;
-        color.toArray(colors, j * 3);
         j += 1;
       }
 
       var geometry = new THREE.BufferGeometry();
       geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
       geometry.setAttribute('scale', new THREE.BufferAttribute(scale, 1));
-      geometry.setAttribute('ca', new THREE.BufferAttribute(colors, 3)); // geometry.computeBoundingSphere();
-
+      geometry.setAttribute('ca', new THREE.BufferAttribute(colors, 3));
       var sprite = new THREE.TextureLoader().load('textures/disc2.png');
       sprite.wrapS = THREE.RepeatWrapping;
-      sprite.wrapT = THREE.RepeatWrapping; // const material = new THREE.PointsMaterial({
-      //   size: 15,
-      //   sizeAttenuation: true,
-      //   map: sprite,
-      //   // color: 0xffffff,
-      //   alphaTest: 0.5,
-      //   transparent: true,
-      // });
-      // material.color.setHSL(1.0, 0.3, 0.7);
-
+      sprite.wrapT = THREE.RepeatWrapping;
       var material = new THREE.ShaderMaterial({
         uniforms: {
           color: {
@@ -35570,13 +37074,113 @@ function () {
       this.points = new THREE.Points(geometry, material);
       this.scene.add(this.points);
     }
+  }, {
+    key: "drawLine",
+    value: function drawLine() {
+      // for now choosing two points only
+      var attributes = this.points.geometry.attributes;
+      var index = App.getRandomInt(0, _settings.Settings.POINTS_COUNT) * 3;
+      var point1 = [attributes.position.array[index], attributes.position.array[index + 1], attributes.position.array[index + 2]];
+      this.target = point1;
+      index = App.getRandomInt(0, _settings.Settings.POINTS_COUNT) * 3;
+      var point2 = [attributes.position.array[index], attributes.position.array[index + 1], attributes.position.array[index + 2]]; // const positions = [...point1, ...point2];
+      // console.log(positions);
+      // // version 1 ------------------------
+
+      var color = new THREE.Color();
+      color.setHSL(1.0, 1.0, 1.0);
+      var colors = [color.r, color.g, color.b];
+      color.setHSL(0.01, 0.01, 0.01);
+      colors = [].concat(_toConsumableArray(colors), [color.r, color.g, color.b]);
+      var geometry = new THREE.BufferGeometry();
+      var vertices = new Float32Array([].concat(point1, point2));
+      geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+      geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+      var material = new THREE.LineBasicMaterial({
+        color: 0xffffff,
+        linewidth: 5,
+        vertexColors: THREE.VertexColors
+      });
+      var line = new THREE.Line(geometry, material);
+      this.scene.add(line);
+    }
+  }, {
+    key: "createLink",
+    // eslint-disable-next-line class-methods-use-this
+    value: function createLink(v1, v2) {
+      var link = new _link.default(v1, v2, this.scene);
+      return link;
+    }
+  }, {
+    key: "generateTestLink",
+    value: function generateTestLink() {
+      // for now choosing two points only
+      var attributes = this.points.geometry.attributes;
+      var index = App.getRandomInt(0, _settings.Settings.POINTS_COUNT) * 3;
+      var v1 = new THREE.Vector3(attributes.position.array[index], attributes.position.array[index + 1], attributes.position.array[index + 2]);
+      index = App.getRandomInt(0, _settings.Settings.POINTS_COUNT) * 3;
+      var v2 = new THREE.Vector3(attributes.position.array[index], attributes.position.array[index + 1], attributes.position.array[index + 2]);
+      this.links = [this.createLink(v1, v2)];
+      this.placeCamera(v1);
+    }
+  }, {
+    key: "processAllLinks",
+    value: function processAllLinks() {
+      if (this.links === null) {
+        return;
+      } // cycle through links
+
+
+      this.links.forEach(function (l) {
+        l.processLink();
+      });
+    }
+  }, {
+    key: "animate",
+    value: function animate() {
+      var _this = this;
+
+      requestAnimationFrame(function () {
+        _this.animate();
+      }); // this.cube.rotation.x += 0.01;
+      // this.cube.rotation.y += 0.01;
+
+      var time = Date.now() * 0.0005; // this.points.rotation.x = time * 0.25;
+      // this.points.rotation.y = time * 0.5;
+      // this.camera.lookAt(this.target[0], this.target[1], this.target[2]);
+
+      this.processAllLinks();
+      this.stats.update(); // this.renderer.render(this.scene, this.camera);
+
+      this.composer.render();
+    }
+  }, {
+    key: "nextStep",
+    value: function nextStep() {
+      this.processAllLinks();
+    }
+  }, {
+    key: "placeCamera",
+    value: function placeCamera(v) {
+      return;
+      var pos = v.clone();
+      pos.z -= 200;
+      this.camera.position.set(pos.x, pos.y, pos.z);
+      this.controls.target.set(v.x, v.y, v.z);
+      this.controls.update();
+    }
+  }], [{
+    key: "getRandomInt",
+    value: function getRandomInt(min, max) {
+      return Math.floor(Math.random() * (max - min) + min);
+    }
   }]);
 
   return App;
 }();
 
 exports.default = App;
-},{"three":"node_modules/three/build/three.module.js","../node_modules/three/examples/jsm/libs/stats.module":"node_modules/three/examples/jsm/libs/stats.module.js","../node_modules/three/examples/jsm/postprocessing/EffectComposer.js":"node_modules/three/examples/jsm/postprocessing/EffectComposer.js","../node_modules/three/examples/jsm/postprocessing/RenderPass.js":"node_modules/three/examples/jsm/postprocessing/RenderPass.js","../node_modules/three/examples/jsm/postprocessing/ShaderPass.js":"node_modules/three/examples/jsm/postprocessing/ShaderPass.js"}],"src/index.js":[function(require,module,exports) {
+},{"three":"node_modules/three/build/three.module.js","../node_modules/three/examples/jsm/libs/stats.module":"node_modules/three/examples/jsm/libs/stats.module.js","../node_modules/three/examples/jsm/postprocessing/EffectComposer":"node_modules/three/examples/jsm/postprocessing/EffectComposer.js","../node_modules/three/examples/jsm/postprocessing/RenderPass":"node_modules/three/examples/jsm/postprocessing/RenderPass.js","../node_modules/three/examples/jsm/postprocessing/UnrealBloomPass":"node_modules/three/examples/jsm/postprocessing/UnrealBloomPass.js","../node_modules/three/examples/jsm/controls/OrbitControls":"node_modules/three/examples/jsm/controls/OrbitControls.js","./settings":"src/settings.js","./link":"src/link.js","./signal":"src/signal.js"}],"src/index.js":[function(require,module,exports) {
 "use strict";
 
 var _app = _interopRequireDefault(require("./app"));
@@ -35589,8 +37193,12 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
 (function start() {
   window.addEventListener('load', function () {
     var space = document.getElementById('threejs-place');
+    var buttonStep = document.getElementById('next-step-button');
     var app = new _app.default(space);
     app.createScene();
+    buttonStep.addEventListener('click', function () {
+      app.nextStep();
+    });
   });
 })();
 },{"./app":"src/app.js"}],"node_modules/parcel-bundler/src/builtins/hmr-runtime.js":[function(require,module,exports) {
@@ -35621,7 +37229,7 @@ var parent = module.bundle.parent;
 if ((!parent || !parent.isParcelRequire) && typeof WebSocket !== 'undefined') {
   var hostname = "" || location.hostname;
   var protocol = location.protocol === 'https:' ? 'wss' : 'ws';
-  var ws = new WebSocket(protocol + '://' + hostname + ':' + "39679" + '/');
+  var ws = new WebSocket(protocol + '://' + hostname + ':' + "33757" + '/');
 
   ws.onmessage = function (event) {
     checkedAssets = {};

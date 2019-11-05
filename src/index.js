@@ -8,7 +8,14 @@ import App from './app';
   window.addEventListener('load', () => {
     const space = document.getElementById('threejs-place');
 
+    const buttonStep = document.getElementById('next-step-button');
+
     const app = new App(space);
     app.createScene();
+
+    buttonStep.addEventListener('click', () => {
+      app.nextStep();
+    });
+
   });
 }());
