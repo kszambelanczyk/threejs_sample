@@ -14,7 +14,7 @@ import App from './app';
     app.createScene();
 
     buttonStep.addEventListener('click', () => {
-      app.nextStep();
+      app.testClick();
     });
 
   });

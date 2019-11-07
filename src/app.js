@@ -10,7 +10,7 @@ import { OrbitControls } from '../node_modules/three/examples/jsm/controls/Orbit
 // import { Line2 } from '../node_modules/three/examples/jsm/lines/Line2';
 
 import { Settings } from './settings';
-import Link from './link';
+import { links } from './link';
 import Signal from './signal';
 
 export default class App {
@@ -20,14 +20,14 @@ export default class App {
     // additional data for points
     this.pointsData = null;
 
-    this.links = null;
-
     this.nodeElement = nodeElement;
+
+    this.theta = 0;
   }
 
   createScene() {
     this.scene = new THREE.Scene();
-    this.scene.fog = new THREE.Fog(0x000000, 200, 600);
+    this.scene.fog = new THREE.FogExp2(0x000000, 0.005); // THREE.Fog(0x000000, 200, 600);
     // this.scene.fog = new THREE.FogExp2(0x000000, 0.01);
     // this.scene.background = new THREE.Color(0x050505);
     this.camera = new THREE.PerspectiveCamera(75,
@@ -43,8 +43,10 @@ export default class App {
     this.stats = new Stats();
     this.nodeElement.appendChild(this.stats.dom);
 
-    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
-    this.controls.update();
+    if (Settings.ORBIT_CONTROLS) {
+      this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+      this.controls.update();
+    }
 
     this.generatePoints();
 
@@ -55,7 +57,7 @@ export default class App {
     this.renderScene = new RenderPass(this.scene, this.camera);
 
     this.bloomPass = new UnrealBloomPass(new THREE.Vector2(this.nodeElement.clientWidth,
-      this.nodeElement.clientHeight), 1.5, 0.4, 0.85);
+      this.nodeElement.clientHeight), Settings.BLOOM_STRENGTH, Settings.BLOOM_RADIOUS, Settings.BLOOM_THRESHOLD);
     this.bloomPass.threshold = 0;
     this.bloomPass.strength = 1.5;
     this.bloomPass.radius = 0;
@@ -65,9 +67,11 @@ export default class App {
     this.composer.addPass(this.bloomPass);
 
     this.animate();
-    this.drawLine();
 
-    this.generateTestLink();
+    this.generateFristSignals();
+    // this.drawLine();
+
+    // this.generateTestLink();
   }
 
   generatePointsData() {
@@ -80,15 +84,13 @@ export default class App {
   }
 
   calculateDistances() {
-    // console.log('Calculating distances - start');
     let j = 0;
+    const a = this.points.geometry.attributes.position.array;
     for (let i = 0; i < Settings.POINTS_COUNT * 3; i += 3) {
-      const v = new THREE.Vector3();
-      v.fromBufferAttribute(this.points.geometry.attributes.position, i);
+      const v = new THREE.Vector3(a[i], a[i + 1], a[i + 2]);
       // searching for points in distance range
       for (let k = 0; k < Settings.POINTS_COUNT * 3; k += 3) {
-        const v2 = new THREE.Vector3();
-        v2.fromBufferAttribute(this.points.geometry.attributes.position, k);
+        const v2 = new THREE.Vector3(a[k], a[k + 1], a[k + 2]);
         const d = v.distanceTo(v2);
         if (d > Settings.NEAR_BORDER && d < Settings.FAR_BORDER) {
           // pushing to array of point neighbours
@@ -98,7 +100,7 @@ export default class App {
 
       j += 1;
     }
-    // console.log('Calculating distances - finished');
+    // console.log(this.pointsData);
   }
 
   generatePoints() {
@@ -107,23 +109,23 @@ export default class App {
     const scale = new Float32Array(Settings.POINTS_COUNT);
     const colors = new Float32Array(Settings.POINTS_COUNT * 3);
 
-    const color1 = new THREE.Color();
-    const color2 = new THREE.Color();
-    // color.setHSL(0.6, 0.75, 0.25);
-    color1.setRGB(0.9, 0.9, 0.9);
-    color2.setRGB(0.0, 0.9, 0.1);
+    // const color1 = new THREE.Color();
+    // const color2 = new THREE.Color();
+
+    // color1.setRGB(0.9, 0.9, 0.9);
+    // color2.setRGB(0.0, 0.9, 0.1);
     let j = 0;
     for (let i = 0; i < Settings.POINTS_COUNT * 3; i += 3) {
       positions[i] = THREE.Math.randFloatSpread(Settings.POINTS_SPREAD); // x
       positions[i + 1] = THREE.Math.randFloatSpread(Settings.POINTS_SPREAD); // y
       positions[i + 2] = THREE.Math.randFloatSpread(Settings.POINTS_SPREAD); // z
-      if ((j % 10) === 0) {
-        scale[j] = 10;
-        color2.toArray(colors, j * 3);
-      } else {
-        scale[j] = 3;
-        color1.toArray(colors, j * 3);
-      }
+      // if ((j % 100) === 0) {
+      //   scale[j] = 10;
+      //   color2.toArray(colors, j * 3);
+      // } else {
+      // }
+      scale[j] = Settings.POINTS_NORMAL_SCALE;
+      Settings.POINTS_COLOR.toArray(colors, j * 3);
       j += 1;
     }
 
@@ -150,86 +152,82 @@ export default class App {
     this.scene.add(this.points);
   }
 
-  drawLine() {
-    // for now choosing two points only
-    const { attributes } = this.points.geometry;
+  // drawLine() {
+  //   // for now choosing two points only
+  //   const { attributes } = this.points.geometry;
 
-    let index = App.getRandomInt(0, Settings.POINTS_COUNT) * 3;
-    const point1 = [
-      attributes.position.array[index],
-      attributes.position.array[index + 1],
-      attributes.position.array[index + 2],
-    ];
+  //   let index = App.getRandomInt(0, Settings.POINTS_COUNT) * 3;
+  //   const point1 = [
+  //     attributes.position.array[index],
+  //     attributes.position.array[index + 1],
+  //     attributes.position.array[index + 2],
+  //   ];
 
-    this.target = point1;
-    index = App.getRandomInt(0, Settings.POINTS_COUNT) * 3;
-    const point2 = [
-      attributes.position.array[index],
-      attributes.position.array[index + 1],
-      attributes.position.array[index + 2],
-    ];
+  //   this.target = point1;
+  //   index = App.getRandomInt(0, Settings.POINTS_COUNT) * 3;
+  //   const point2 = [
+  //     attributes.position.array[index],
+  //     attributes.position.array[index + 1],
+  //     attributes.position.array[index + 2],
+  //   ];
 
-    // const positions = [...point1, ...point2];
-    // console.log(positions);
-
-
-    // // version 1 ------------------------
-    const color = new THREE.Color();
-    color.setHSL(1.0, 1.0, 1.0);
-    let colors = [color.r, color.g, color.b];
-    color.setHSL(0.01, 0.01, 0.01);
-    colors = [...colors, color.r, color.g, color.b];
-
-    const geometry = new THREE.BufferGeometry();
-    const vertices = new Float32Array([...point1, ...point2]);
-    geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
-    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-    const material = new THREE.LineBasicMaterial({
-      color: 0xffffff,
-      linewidth: 5,
-      vertexColors: THREE.VertexColors,
-    });
+  //   // const positions = [...point1, ...point2];
+  //   // console.log(positions);
 
 
-    const line = new THREE.Line(geometry, material);
-    this.scene.add(line);
-  }
+  //   // // version 1 ------------------------
+  //   const color = new THREE.Color();
+  //   color.setHSL(1.0, 1.0, 1.0);
+  //   let colors = [color.r, color.g, color.b];
+  //   color.setHSL(0.01, 0.01, 0.01);
+  //   colors = [...colors, color.r, color.g, color.b];
+
+  //   const geometry = new THREE.BufferGeometry();
+  //   const vertices = new Float32Array([...point1, ...point2]);
+  //   geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+  //   geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  //   const material = new THREE.LineBasicMaterial({
+  //     color: 0xffffff,
+  //     linewidth: 5,
+  //     vertexColors: THREE.VertexColors,
+  //   });
+
+
+  //   const line = new THREE.Line(geometry, material);
+  //   this.scene.add(line);
+  // }
 
   static getRandomInt(min, max) {
     return Math.floor(Math.random() * (max - min) + min);
   }
 
+  // generateTestLink() {
+  //   // for now choosing two points only
+  //   const { attributes } = this.points.geometry;
+
+  //   let index = App.getRandomInt(0, Settings.POINTS_COUNT) * 3;
+  //   const v1 = new THREE.Vector3(attributes.position.array[index],
+  //     attributes.position.array[index + 1],
+  //     attributes.position.array[index + 2]);
+
+  //   index = App.getRandomInt(0, Settings.POINTS_COUNT) * 3;
+  //   const v2 = new THREE.Vector3(attributes.position.array[index],
+  //     attributes.position.array[index + 1],
+  //     attributes.position.array[index + 2]);
+
+  //   // eslint-disable-next-line no-new
+  //   new Link(v1, v2, this.scene);
+
+  //   this.placeCamera(v1);
+  // }
+
   // eslint-disable-next-line class-methods-use-this
-  createLink(v1, v2) {
-    const link = new Link(v1, v2, this.scene);
-    return link;
-  }
-
-  generateTestLink() {
-    // for now choosing two points only
-    const { attributes } = this.points.geometry;
-
-    let index = App.getRandomInt(0, Settings.POINTS_COUNT) * 3;
-    const v1 = new THREE.Vector3(attributes.position.array[index],
-      attributes.position.array[index + 1],
-      attributes.position.array[index + 2]);
-
-    index = App.getRandomInt(0, Settings.POINTS_COUNT) * 3;
-    const v2 = new THREE.Vector3(attributes.position.array[index],
-      attributes.position.array[index + 1],
-      attributes.position.array[index + 2]);
-
-    this.links = [this.createLink(v1, v2)];
-
-    this.placeCamera(v1);
-  }
-
   processAllLinks() {
-    if (this.links === null) {
+    if (links === undefined || links === null) {
       return;
     }
     // cycle through links
-    this.links.forEach((l) => {
+    links.forEach((l) => {
       l.processLink();
     });
   }
@@ -237,34 +235,55 @@ export default class App {
   animate() {
     requestAnimationFrame(() => { this.animate(); });
 
-    // this.cube.rotation.x += 0.01;
-    // this.cube.rotation.y += 0.01;
-
-    const time = Date.now() * 0.0005;
-    // this.points.rotation.x = time * 0.25;
-    // this.points.rotation.y = time * 0.5;
-
-    // this.camera.lookAt(this.target[0], this.target[1], this.target[2]);
+    if (!Settings.ORBIT_CONTROLS) {
+      this.theta += 0.05;
+      this.camera.position.x = Settings.CAMERA_RADIUS * Math.sin(THREE.Math.degToRad(this.theta));
+      this.camera.position.y = Settings.CAMERA_RADIUS * Math.sin(THREE.Math.degToRad(this.theta));
+      this.camera.position.z = Settings.CAMERA_RADIUS * Math.cos(THREE.Math.degToRad(this.theta));
+      this.camera.lookAt(this.scene.position);
+      this.camera.updateMatrixWorld();
+    }
 
     this.processAllLinks();
+    Signal.ProcessSignals();
 
     this.stats.update();
 
-    // this.renderer.render(this.scene, this.camera);
     this.composer.render();
   }
 
-  nextStep() {
-    this.processAllLinks();
+  testClick() {
+    // this.processAllLinks();
+    Signal.generateSignal(this.points, this.pointsData, this.scene);
+    // this.signals.push(s);
   }
 
-  placeCamera(v) {
-    return;
-    const pos = v.clone();
-    pos.z -= 200;
-    this.camera.position.set(pos.x, pos.y, pos.z);
+  // placeCamera(v) {
+  //   return;
+  //   const pos = v.clone();
+  //   pos.z -= 200;
+  //   this.camera.position.set(pos.x, pos.y, pos.z);
 
-    this.controls.target.set(v.x, v.y, v.z);
-    this.controls.update();
+  //   this.controls.target.set(v.x, v.y, v.z);
+  //   this.controls.update();
+  // }
+
+  sceneResize() {
+    const width = this.nodeElement.clientWidth;
+    const height = this.nodeElement.clientHeight;
+    this.camera.aspect = width / height;
+    this.camera.updateProjectionMatrix();
+    this.renderer.setSize(width, height);
+    this.composer.setSize(width, height);
+  }
+
+  generateFristSignals() {
+    let count = Settings.START_SIGNALS_COUNT;
+    setTimeout(Settings.START_SIGNALS_DELAY, () => {
+      if (count > 0) {
+        Signal.generateSignal(this.points, this.pointsData, this.scene);
+      }
+      count -= 1;
+    });
   }
 }

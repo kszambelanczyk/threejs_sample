@@ -1,12 +1,16 @@
 import * as THREE from 'three';
+import remove from 'lodash/remove';
 import { Settings } from './settings';
 
-class Link {
-  constructor(v1, v2, scene) {
+export const links = [];
+
+export class Link {
+  constructor(v1, v2, scene, signal) {
     this.start = v1.clone();
     this.end = v2.clone();
     this.vec = v2.clone().sub(v1);
     this.scene = scene;
+    this.signal = signal;
 
     this.length = this.start.distanceTo(this.end);
     this.points = [];
@@ -67,7 +71,7 @@ class Link {
     // setting up colors for buffer attribute
     for (let i = 0; i < (this.linkSegmentsCount + 1); i += 1) {
       const color = new THREE.Color();
-      color.setRGB(1.0, 0.0, 0.0);
+      color.setRGB(0.0, 0.0, 0.0);
       colors.push(color.r);
       colors.push(color.g);
       colors.push(color.b);
@@ -90,6 +94,9 @@ class Link {
     this.geometry.setDrawRange(0, 0);
 
     this.scene.add(this.line);
+
+    links.push(this);
+    console.log(`Links count: ${links.length}`);
   }
 
   calculateRandomPerpendicularV() {
@@ -126,11 +133,6 @@ class Link {
       // if first segment is inactive than activate it and do nothing more
       if (i === 0 && !this.segments[i].active && this.segments[i].state === 0) {
         this.segments[i].active = true;
-        // this.segments[i].state = 1;
-        // // then activate next segment
-        // if ((i + 1) < this.segments.length) {
-        //   this.segments[i + 1].active = true;
-        // }
         break;
       } else {
         // add state to all active segments
@@ -159,6 +161,14 @@ class Link {
       return;
     }
 
+    // if last segment has been activated and has state 1 then
+    // point becomes activated
+    if (this.segments[this.segments.length - 1].active && this.segments[this.segments.length - 1].state === 1) {
+      // sending information to signal object
+      this.signal.linkArrived();
+    }
+
+
     // finding begining and ending index of verticles
     let beginV = -1;
     let endV = 0;
@@ -181,13 +191,6 @@ class Link {
 
     this.segments.forEach((s) => {
       if (!s.active) {
-        // colors[s.index * 3] = 0;
-        // colors[(s.index * 3) + 1] = 0;
-        // colors[(s.index * 3) + 2] = 0;
-
-        // colors[(s.index * 3) + 3] = 0;
-        // colors[(s.index * 3) + 4] = 0;
-        // colors[(s.index * 3) + 5] = 0;
         return;
       }
       const c = this.stateColors[s.state];
@@ -209,7 +212,23 @@ class Link {
     // clearing link data
     this.segments = [];
     this.scene.remove(this.line);
-  }
-}
+    // inform signal about link destroy
+    this.signal.linkDestroyed();
 
-export default Link;
+    remove(links, (l) => {
+      if (l === this) {
+        return true;
+      }
+      return false;
+    });
+  }
+
+  // // all link for app
+  // static links() {
+  //   debugger;
+  //   if (links === undefined) {
+  //     this.links = [];
+  //   }
+  //   return this.links;
+  // }
+}

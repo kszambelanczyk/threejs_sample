@@ -1,7 +1,8 @@
+body {
+    background-color: black;
+}
 #threejs-place {
-    width: 1000px;
     height: 900px;
-
 }
 
 canvas {
