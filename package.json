@@ -8,11 +8,13 @@
     "build": "parcel build index.html"
   },
   "dependencies": {
+    "es6-tween": "^5.5.10",
     "lodash": "^4.17.15",
     "three": "^0.110.0"
   },
   "devDependencies": {
     "eslint": "^6.6.0",
+    "eslint-config-airbnb": "^18.0.1",
     "eslint-config-airbnb-base": "^14.0.0",
     "eslint-plugin-import": "^2.18.2",
     "parcel-bundler": "^1.12.4"

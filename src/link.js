@@ -13,9 +13,12 @@ export class Link {
     this.signal = signal;
 
     this.length = this.start.distanceTo(this.end);
+    // console.log(this.length);
     this.points = [];
 
     this.stateColors = [];
+
+    this.step_time = THREE.Math.randInt(Settings.LINK_STEP_TIME_MIN, Settings.LINK_STEP_TIME_MAX);
 
     const v = this.end.clone().sub(this.start).normalize().multiplyScalar(Settings.LINK_SEGMENT_LENGTH);
 
@@ -58,13 +61,16 @@ export class Link {
 
     // setting up colors for each state
     const step = 1 / Settings.SEGMENT_STATE_COUNT;
-    let c = 1.0;
+    let c = 0.0;
+    let beginColor = Settings.LINK_START_COLOR.clone();
     for (let i = 0; i < Settings.SEGMENT_STATE_COUNT; i += 1) {
+      let nextColor = beginColor.clone().lerp(Settings.LINK_END_COLOR, c);
       this.stateColors.push({
-        beginColor: c,
-        endColor: c - step,
+        beginColor,
+        endColor: nextColor,
       });
-      c -= step;
+      beginColor = nextColor;
+      c += step;
     }
 
     const colors = [];
@@ -96,7 +102,7 @@ export class Link {
     this.scene.add(this.line);
 
     links.push(this);
-    console.log(`Links count: ${links.length}`);
+    // console.log(`Links count: ${links.length}`);
   }
 
   calculateRandomPerpendicularV() {
@@ -127,7 +133,7 @@ export class Link {
     if (t < this.drawTime) {
       return;
     }
-    this.drawTime = t + Settings.LINK_STEP_TIME;
+    this.drawTime = t + this.step_time;
     // cycle through segments and change states
     for (let i = 0; i < this.segments.length; i += 1) {
       // if first segment is inactive than activate it and do nothing more
@@ -194,13 +200,13 @@ export class Link {
         return;
       }
       const c = this.stateColors[s.state];
-      colors[s.index * 3] = c.endColor;
-      colors[(s.index * 3) + 1] = c.endColor;
-      colors[(s.index * 3) + 2] = c.endColor;
+      colors[s.index * 3] = c.endColor.r;
+      colors[(s.index * 3) + 1] = c.endColor.g;
+      colors[(s.index * 3) + 2] = c.endColor.b;
 
-      colors[(s.index * 3) + 3] = c.beginColor;
-      colors[(s.index * 3) + 4] = c.beginColor;
-      colors[(s.index * 3) + 5] = c.beginColor;
+      colors[(s.index * 3) + 3] = c.beginColor.r;
+      colors[(s.index * 3) + 4] = c.beginColor.g;
+      colors[(s.index * 3) + 5] = c.beginColor.b;
     });
 
     // console.log(colors);
@@ -222,13 +228,4 @@ export class Link {
       return false;
     });
   }
-
-  // // all link for app
-  // static links() {
-  //   debugger;
-  //   if (links === undefined) {
-  //     this.links = [];
-  //   }
-  //   return this.links;
-  // }
 }

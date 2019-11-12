@@ -102,8 +102,8 @@ class Signal {
   setPointColor(color) {
     const colors = this.pointsGeometry.geometry.attributes.ca.array;
     colors[this.endIndex * 3] = color.r;
-    colors[this.endIndex * 3 + 1] = color.r;
-    colors[this.endIndex * 3 + 2] = color.r;
+    colors[this.endIndex * 3 + 1] = color.g;
+    colors[this.endIndex * 3 + 2] = color.b;
     this.pointsGeometry.geometry.attributes.ca.needsUpdate = true;
   }
 
