@@ -36841,10 +36841,10 @@ var Settings = {
   // points
   POINTS_COUNT: 500,
   POINTS_SPREAD: 250,
-  POINTS_COLOR: new THREE.Color(0xe59500),
-  // 'rgb(1, 186, 255)'),
-  POINTS_ACTIVATED_COLOR: new THREE.Color(0xe59500),
-  // 'rgb(1, 186, 255)'),
+  POINTS_COLOR: new THREE.Color(0xf1faff),
+  // 0xe59500), // 'rgb(1, 186, 255)'),
+  POINTS_ACTIVATED_COLOR: new THREE.Color(0xf1faff),
+  // 0xe59500), // 'rgb(1, 186, 255)'),
   POINTS_NORMAL_SCALE: 1,
   // area for looking points to connect
   NEAR_BORDER: 50,
@@ -36858,13 +36858,14 @@ var Settings = {
   CAMERA_FOV_START: 1,
   CAMERA_FOV_END: 60,
   // links
-  LINK_SEGMENT_LENGTH: 3,
+  LINK_SEGMENT_LENGTH: 2,
   LINK_STEP_TIME_MIN: 15,
   LINK_STEP_TIME_MAX: 65,
   LINK_LINE_WIDTH: 1,
-  LINK_START_COLOR: new THREE.Color(0xe59500),
-  LINK_END_COLOR: new THREE.Color(0x3a280b),
-  // 251b0d), // 02040f),
+  LINK_START_COLOR: new THREE.Color(0xf1faff),
+  // 0x0097fb), // e59500),
+  LINK_END_COLOR: new THREE.Color(0x303030),
+  // 3a280b), // 251b0d), // 02040f),
   // link's segments
   SEGMENT_STATE_COUNT: 80,
   // equals to length of visible segments
@@ -36874,15 +36875,17 @@ var Settings = {
   ORBIT_CONTROLS: false,
   CAMERA_RADIUS: 200,
   // bloom
-  BLOOM_STRENGTH: 3.0,
+  BLOOM_STRENGTH: 2.0,
   BLOOM_RADIOUS: 0.0,
-  BLOOM_THRESHOLD: 0.05,
+  BLOOM_THRESHOLD: 0.2,
   // 0.85,
   // fog
   FOG_COLOR: 0x02040f,
+  // 02040f,
   FOG_DENSITY: 0.006,
   // scene
-  SCENE_BACKGROUND_COLOR: new THREE.Color(0x02040f)
+  SCENE_BACKGROUND_COLOR: new THREE.Color(0x02040f) // 02040f),
+
 };
 exports.Settings = Settings;
 },{"three":"node_modules/three/build/three.module.js"}],"node_modules/lodash/_listCacheClear.js":[function(require,module,exports) {
@@ -41083,7 +41086,7 @@ var parent = module.bundle.parent;
 if ((!parent || !parent.isParcelRequire) && typeof WebSocket !== 'undefined') {
   var hostname = "" || location.hostname;
   var protocol = location.protocol === 'https:' ? 'wss' : 'ws';
-  var ws = new WebSocket(protocol + '://' + hostname + ':' + "36509" + '/');
+  var ws = new WebSocket(protocol + '://' + hostname + ':' + "40675" + '/');
 
   ws.onmessage = function (event) {
     checkedAssets = {};
